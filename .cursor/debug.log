@@ -1,0 +1,4 @@
+{"runId":"pre-fix","hypothesisId":"H1","location":"apps/web/next.config.js:8","message":"Loaded next.config as ESM","data":{"hasTypeModule":true,"keys":["transpilePackages"]},"timestamp":1773216541712}
+{"runId":"pre-fix","hypothesisId":"H1","location":"apps/web/next.config.js:8","message":"Loaded next.config as ESM","data":{"hasTypeModule":true,"keys":["transpilePackages"]},"timestamp":1773218525094}
+{"runId":"pre-fix","hypothesisId":"H1","location":"apps/web/next.config.js:8","message":"Loaded next.config as ESM","data":{"hasTypeModule":true,"keys":["transpilePackages"]},"timestamp":1773218815410}
+{"runId":"pre-fix","hypothesisId":"H2","location":"apps/api/src/lib/logger.ts:7","message":"Initializing pino logger","data":{"nodeEnv":"development","wantPretty":true},"timestamp":1773218814089}

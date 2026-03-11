@@ -1,0 +1,473 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  TEACHER
+  STUDENT
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+}
+
+enum ExamType {
+  MID
+  FINAL
+  INTERNAL
+  ASSIGNMENT
+}
+
+enum SubmissionStatus {
+  PENDING
+  ACCEPTED
+  WRONG_ANSWER
+  TIME_LIMIT_EXCEEDED
+  MEMORY_LIMIT_EXCEEDED
+  COMPILATION_ERROR
+  RUNTIME_ERROR
+}
+
+enum AssignmentSubmissionStatus {
+  PENDING
+  SUBMITTED
+  GRADED
+  LATE
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum ContestType {
+  PUBLIC
+  PRIVATE
+  INSTITUTIONAL
+}
+
+enum ContestStatus {
+  UPCOMING
+  LIVE
+  ENDED
+}
+
+enum NotificationType {
+  ASSIGNMENT_POSTED
+  GRADE_PUBLISHED
+  CONTEST_STARTING
+  SUBMISSION_JUDGED
+  ENROLLMENT_ADDED
+  GENERAL
+}
+
+// ─────────────────────────────────────────────
+// CORE
+// ─────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  supabaseId   String   @unique
+  email        String   @unique
+  name         String
+  role         Role     @default(STUDENT)
+  avatar       String?
+  isVerified   Boolean  @default(false)
+  githubUsername String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  profile            Profile?
+  departmentHeaded   Department?         @relation("DeptHead")
+  teachingClasses    Batch[]             @relation("TeacherBatches")
+  enrollments        Enrollment[]
+  attendanceMarked   Attendance[]        @relation("MarkedBy")
+  attendanceRecords  AttendanceRecord[]
+  gradesReceived     Grade[]             @relation("StudentGrades")
+  gradesGiven        Grade[]             @relation("TeacherGrades")
+  assignmentsCreated Assignment[]        @relation("AssignmentCreator")
+  assignmentSubmissions AssignmentSubmission[]
+  problemsCreated    Problem[]
+  submissions        Submission[]
+  contestsCreated    Contest[]
+  contestRegistrations ContestRegistration[]
+  contestStandings   ContestStanding[]
+  leaderboard        Leaderboard?
+  notifications      Notification[]
+  activityLogs       ActivityLog[]
+
+  @@map("users")
+}
+
+model Profile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bio         String?
+  skills      String[]
+  socialLinks Json?
+  college     String?
+  batch       String?
+  department  String?
+  totalPoints Int      @default(0)
+  rank        Int?
+  streak      Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("profiles")
+}
+
+model Department {
+  id        String   @id @default(cuid())
+  name      String
+  code      String   @unique
+  headId    String?  @unique
+  head      User?    @relation("DeptHead", fields: [headId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  batches  Batch[]
+  subjects Subject[]
+
+  @@map("departments")
+}
+
+model Batch {
+  id           String   @id @default(cuid())
+  name         String
+  year         Int
+  semester     Int
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id])
+  teacherId    String
+  teacher      User       @relation("TeacherBatches", fields: [teacherId], references: [id])
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  // Relations
+  enrollments Enrollment[]
+  subjects    Subject[]
+  attendance  Attendance[]
+
+  @@map("batches")
+}
+
+model Enrollment {
+  id         String   @id @default(cuid())
+  studentId  String
+  student    User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  batchId    String
+  batch      Batch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  enrolledAt DateTime @default(now())
+
+  @@unique([studentId, batchId])
+  @@map("enrollments")
+}
+
+// ─────────────────────────────────────────────
+// ACADEMIC
+// ─────────────────────────────────────────────
+
+model Subject {
+  id           String     @id @default(cuid())
+  name         String
+  code         String
+  batchId      String
+  batch        Batch      @relation(fields: [batchId], references: [id])
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id])
+  teacherId    String
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  // Relations
+  grades      Grade[]
+  assignments Assignment[]
+  attendance  Attendance[]
+
+  @@unique([code, batchId])
+  @@map("subjects")
+}
+
+model Attendance {
+  id        String   @id @default(cuid())
+  date      DateTime @db.Date
+  batchId   String
+  batch     Batch    @relation(fields: [batchId], references: [id])
+  subjectId String
+  subject   Subject  @relation(fields: [subjectId], references: [id])
+  teacherId String
+  teacher   User     @relation("MarkedBy", fields: [teacherId], references: [id])
+  createdAt DateTime @default(now())
+
+  records AttendanceRecord[]
+
+  @@unique([date, batchId, subjectId])
+  @@map("attendance")
+}
+
+model AttendanceRecord {
+  id           String           @id @default(cuid())
+  attendanceId String
+  attendance   Attendance       @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
+  studentId    String
+  student      User             @relation(fields: [studentId], references: [id])
+  status       AttendanceStatus @default(PRESENT)
+
+  @@unique([attendanceId, studentId])
+  @@map("attendance_records")
+}
+
+model Grade {
+  id        String   @id @default(cuid())
+  studentId String
+  student   User     @relation("StudentGrades", fields: [studentId], references: [id])
+  subjectId String
+  subject   Subject  @relation(fields: [subjectId], references: [id])
+  teacherId String
+  teacher   User     @relation("TeacherGrades", fields: [teacherId], references: [id])
+  examType  ExamType
+  marks     Float
+  maxMarks  Float
+  semester  Int
+  remarks   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("grades")
+}
+
+model Assignment {
+  id            String   @id @default(cuid())
+  title         String
+  description   String
+  subjectId     String
+  subject       Subject  @relation(fields: [subjectId], references: [id])
+  teacherId     String
+  teacher       User     @relation("AssignmentCreator", fields: [teacherId], references: [id])
+  dueDate       DateTime
+  maxScore      Float
+  attachmentUrl String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  submissions AssignmentSubmission[]
+
+  @@map("assignments")
+}
+
+model AssignmentSubmission {
+  id           String                     @id @default(cuid())
+  assignmentId String
+  assignment   Assignment                 @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  studentId    String
+  student      User                       @relation(fields: [studentId], references: [id])
+  submittedAt  DateTime?
+  fileUrl      String?
+  score        Float?
+  feedback     String?
+  status       AssignmentSubmissionStatus @default(PENDING)
+  createdAt    DateTime                   @default(now())
+  updatedAt    DateTime                   @updatedAt
+
+  @@unique([assignmentId, studentId])
+  @@map("assignment_submissions")
+}
+
+// ─────────────────────────────────────────────
+// CODING PLATFORM
+// ─────────────────────────────────────────────
+
+model Problem {
+  id            String     @id @default(cuid())
+  title         String
+  slug          String     @unique
+  description   String     @db.Text
+  difficulty    Difficulty
+  tags          String[]
+  constraints   String?
+  inputFormat   String?
+  outputFormat  String?
+  sampleInput   String?
+  sampleOutput  String?
+  createdById   String
+  createdBy     User       @relation(fields: [createdById], references: [id])
+  isPublished   Boolean    @default(false)
+  points        Int
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  testCases   TestCase[]
+  submissions Submission[]
+  contests    ContestProblem[]
+
+  @@map("problems")
+}
+
+model TestCase {
+  id             String   @id @default(cuid())
+  problemId      String
+  problem        Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  input          String   @db.Text
+  expectedOutput String   @db.Text
+  isSample       Boolean  @default(false)
+  isHidden       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@map("test_cases")
+}
+
+model Submission {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id])
+  problemId String
+  problem   Problem          @relation(fields: [problemId], references: [id])
+  contestId String?
+  contest   Contest?         @relation(fields: [contestId], references: [id])
+  code      String           @db.Text
+  language  String
+  status    SubmissionStatus @default(PENDING)
+  runtime   Int?             // in ms
+  memory    Int?             // in KB
+  verdict   Json?            // detailed per-test-case results
+  createdAt DateTime         @default(now())
+
+  @@map("submissions")
+}
+
+// ─────────────────────────────────────────────
+// CONTESTS
+// ─────────────────────────────────────────────
+
+model Contest {
+  id          String        @id @default(cuid())
+  title       String
+  description String        @db.Text
+  startTime   DateTime
+  endTime     DateTime
+  type        ContestType   @default(PUBLIC)
+  status      ContestStatus @default(UPCOMING)
+  createdById String
+  createdBy   User          @relation(fields: [createdById], references: [id])
+  rules       String?       @db.Text
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  problems      ContestProblem[]
+  registrations ContestRegistration[]
+  standings     ContestStanding[]
+  submissions   Submission[]
+
+  @@map("contests")
+}
+
+model ContestProblem {
+  contestId String
+  contest   Contest @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  problemId String
+  problem   Problem @relation(fields: [problemId], references: [id])
+  order     Int     @default(0)
+  points    Int     @default(100)
+
+  @@id([contestId, problemId])
+  @@map("contest_problems")
+}
+
+model ContestRegistration {
+  contestId    String
+  contest      Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  registeredAt DateTime @default(now())
+
+  @@id([contestId, userId])
+  @@map("contest_registrations")
+}
+
+model ContestStanding {
+  id             String   @id @default(cuid())
+  contestId      String
+  contest        Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+  totalScore     Int      @default(0)
+  penalty        Int      @default(0)
+  rank           Int?
+  solvedCount    Int      @default(0)
+  lastSubmitTime DateTime?
+  updatedAt      DateTime @updatedAt
+
+  @@unique([contestId, userId])
+  @@map("contest_standings")
+}
+
+// ─────────────────────────────────────────────
+// LEADERBOARD
+// ─────────────────────────────────────────────
+
+model Leaderboard {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  totalPoints           Int      @default(0)
+  problemsSolved        Int      @default(0)
+  easySolved            Int      @default(0)
+  mediumSolved          Int      @default(0)
+  hardSolved            Int      @default(0)
+  contestsParticipated  Int      @default(0)
+  rank                  Int?
+  weeklyRank            Int?
+  monthlyRank           Int?
+  updatedAt             DateTime @updatedAt
+
+  @@map("leaderboard")
+}
+
+// ─────────────────────────────────────────────
+// NOTIFICATIONS & ACTIVITY
+// ─────────────────────────────────────────────
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  message   String
+  isRead    Boolean          @default(false)
+  link      String?
+  createdAt DateTime         @default(now())
+
+  @@map("notifications")
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@map("activity_logs")
+}
