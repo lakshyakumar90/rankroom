@@ -143,7 +143,7 @@ Make sure you have the following installed:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-org/rankroom.git
+git clone https://github.com/lakshyakumar90/rankroom.git
 cd rankroom
 ```
 
