@@ -27,13 +27,13 @@ export default function MarkAttendancePage() {
 
   const { data: classesData } = useQuery({
     queryKey: ["teacher-classes"],
-    queryFn: () => api.get<ApiResponse<Batch[]>>("/api/admin/classes"),
+    queryFn: () => api.get<ApiResponse<Batch[]>>("/api/users/me/classes"),
     enabled: !!user,
   });
 
   const { data: enrollmentsData, isLoading: loadingEnrollments } = useQuery({
     queryKey: ["enrollments", selectedBatch],
-    queryFn: () => api.get<ApiResponse<Enrollment[]>>(`/api/users/search?batchId=${selectedBatch}&role=STUDENT&limit=100`),
+    queryFn: () => api.get<ApiResponse<Enrollment[]>>(`/api/users/batch/${selectedBatch}/students`),
     enabled: !!selectedBatch,
   });
 
@@ -45,8 +45,8 @@ export default function MarkAttendancePage() {
 
   const submitMutation = useMutation({
     mutationFn: () =>
-      api.post("/api/attendance", {
-        batchId: selectedBatch,
+      api.post("/api/attendance/session", {
+        sectionId: selectedBatch,
         subjectId: selectedSubject,
         date: new Date(date).toISOString(),
         records: Object.entries(records).map(([studentId, status]) => ({ studentId, status })),

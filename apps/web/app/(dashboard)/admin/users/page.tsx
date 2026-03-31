@@ -1,23 +1,75 @@
 "use client";
 
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Fragment, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { type ApiResponse } from "@repo/types";
-import { Search, Plus, Trash2 } from "lucide-react";
+import { Role, type ApiResponse } from "@repo/types";
+import { Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "@/lib/utils";
 
-interface User { id: string; name: string; email: string; role: string; avatar?: string | null; createdAt: string; isVerified: boolean }
+interface UserRecord {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  avatar?: string | null;
+  createdAt: string;
+  isVerified: boolean;
+  githubUsername?: string | null;
+  profile?: {
+    handle?: string | null;
+    bio?: string | null;
+    college?: string | null;
+    batch?: string | null;
+    department?: string | null;
+    isPublic: boolean;
+  } | null;
+  departmentHeaded?: { id: string; name: string; code: string } | null;
+  enrollments?: Array<{
+    sectionId: string;
+    section: {
+      id: string;
+      name: string;
+      code: string;
+      academicYear: string;
+      department: { id: string; name: string; code: string };
+    };
+  }>;
+}
+
+interface SectionOption {
+  id: string;
+  name: string;
+  code: string;
+  academicYear: string;
+  department: { name: string; code: string };
+}
+
+interface DepartmentOption {
+  id: string;
+  name: string;
+  code: string;
+}
 
 export default function AdminUsersPage() {
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [createForm, setCreateForm] = useState({
+    name: "",
+    email: "",
+    password: "",
+    role: Role.STUDENT,
+    departmentId: "",
+  });
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -26,104 +78,321 @@ export default function AdminUsersPage() {
       const params = new URLSearchParams({ limit: "50" });
       if (search) params.set("search", search);
       if (roleFilter) params.set("role", roleFilter);
-      return api.get<ApiResponse<User[]>>(`/api/admin/users?${params}`);
+      return api.get<ApiResponse<UserRecord[]>>(`/api/admin/users?${params}`);
     },
+  });
+
+  const { data: sectionsData } = useQuery({
+    queryKey: ["admin-sections", "options"],
+    queryFn: () => api.get<ApiResponse<SectionOption[]>>("/api/sections"),
+  });
+
+  const { data: departmentsData } = useQuery({
+    queryKey: ["admin-departments", "options"],
+    queryFn: () => api.get<ApiResponse<DepartmentOption[]>>("/api/admin/departments"),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/api/admin/users/${id}`),
     onSuccess: () => {
       toast.success("User deleted");
-      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      void queryClient.invalidateQueries({ queryKey: ["admin-users"] });
     },
     onError: () => toast.error("Failed to delete user"),
   });
 
-  const users = data?.data ?? [];
+  const createMutation = useMutation({
+    mutationFn: () => api.post("/api/admin/users", createForm),
+    onSuccess: () => {
+      toast.success("User created");
+      setCreateForm({ name: "", email: "", password: "", role: Role.STUDENT, departmentId: "" });
+      setShowCreate(false);
+      void queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+    },
+    onError: (error: Error) => toast.error(error.message || "Failed to create user"),
+  });
 
-  const roleBadgeColor = (role: string) => {
-    if (role === "ADMIN") return "bg-red-500/15 text-red-500";
-    if (role === "TEACHER") return "bg-blue-500/15 text-blue-500";
-    return "bg-zinc-500/15 text-zinc-500";
-  };
+  const users = data?.data ?? [];
+  const sections = sectionsData?.data ?? [];
+  const departments = departmentsData?.data ?? [];
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Users</h1>
-          <p className="text-muted-foreground">Manage all platform users</p>
+          <p className="text-muted-foreground">Manage accounts, student academic identity, and profile visibility.</p>
         </div>
-        <Button size="sm"><Plus className="h-4 w-4 mr-2" />Add User</Button>
+        <Button size="sm" onClick={() => setShowCreate((current) => !current)}>
+          <Plus className="mr-2 h-4 w-4" />
+          Add User
+        </Button>
       </div>
 
-      {/* Filters */}
+      {showCreate ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Create User</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input
+                placeholder="Full name"
+                value={createForm.name}
+                onChange={(event) => setCreateForm((current) => ({ ...current, name: event.target.value }))}
+              />
+              <Input
+                placeholder="Email"
+                type="email"
+                value={createForm.email}
+                onChange={(event) => setCreateForm((current) => ({ ...current, email: event.target.value }))}
+              />
+              <Input
+                placeholder="Temporary password"
+                type="password"
+                value={createForm.password}
+                onChange={(event) => setCreateForm((current) => ({ ...current, password: event.target.value }))}
+              />
+              <select
+                className="h-9 border border-input bg-background px-3 text-sm"
+                value={createForm.role}
+                onChange={(event) => setCreateForm((current) => ({ ...current, role: event.target.value as Role }))}
+              >
+                {Object.values(Role).map((role) => (
+                  <option key={role} value={role}>
+                    {role}
+                  </option>
+                ))}
+              </select>
+              {createForm.role === Role.DEPARTMENT_HEAD ? (
+                <select
+                  className="h-9 border border-input bg-background px-3 text-sm sm:col-span-2"
+                  value={createForm.departmentId}
+                  onChange={(event) => setCreateForm((current) => ({ ...current, departmentId: event.target.value }))}
+                >
+                  <option value="">Select department</option>
+                  {departments.map((department) => (
+                    <option key={department.id} value={department.id}>
+                      {department.name}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowCreate(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={() => createMutation.mutate()}
+                disabled={
+                  !createForm.name ||
+                  !createForm.email ||
+                  !createForm.password ||
+                  (createForm.role === Role.DEPARTMENT_HEAD && !createForm.departmentId) ||
+                  createMutation.isPending
+                }
+              >
+                {createMutation.isPending ? "Creating..." : "Create User"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <div className="flex gap-3">
-        <div className="relative flex-1 max-w-xs">
+        <div className="relative max-w-xs flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Search users..." className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Input placeholder="Search users..." className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} />
         </div>
-        <div className="flex gap-2">
-          {["", "STUDENT", "TEACHER", "ADMIN"].map((r) => (
-            <Button key={r} variant={roleFilter === r ? "default" : "outline"} size="sm" onClick={() => setRoleFilter(r)}>
-              {r || "All"}
+        <div className="flex flex-wrap gap-2">
+          {["", ...Object.values(Role)].map((role) => (
+            <Button key={role} variant={roleFilter === role ? "default" : "outline"} size="sm" onClick={() => setRoleFilter(role)}>
+              {role || "All"}
             </Button>
           ))}
         </div>
       </div>
 
-      {/* Table */}
-      <div className="rounded-lg border border-border overflow-hidden">
+      <div className="overflow-hidden border border-border">
         <table className="w-full">
           <thead>
             <tr className="border-b border-border bg-muted/30">
               <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">User</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground hidden sm:table-cell">Role</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground hidden md:table-cell">Joined</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground hidden lg:table-cell">Status</th>
-              <th className="px-4 py-3 w-16"></th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground hidden md:table-cell">Section</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground hidden lg:table-cell">Joined</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">Actions</th>
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
-              Array.from({ length: 8 }).map((_, i) => (
-                <tr key={i} className="border-b border-border">
-                  <td className="px-4 py-3"><div className="flex items-center gap-3"><Skeleton className="h-9 w-9 rounded-full" /><div><Skeleton className="h-4 w-24 mb-1" /><Skeleton className="h-3 w-32" /></div></div></td>
-                  <td className="px-4 py-3 hidden sm:table-cell"><Skeleton className="h-5 w-16" /></td>
-                  <td className="px-4 py-3 hidden md:table-cell"><Skeleton className="h-4 w-20" /></td>
-                  <td className="px-4 py-3 hidden lg:table-cell"><Skeleton className="h-5 w-16" /></td>
-                  <td className="px-4 py-3"><Skeleton className="h-8 w-8 ml-auto" /></td>
+              Array.from({ length: 8 }).map((_, index) => (
+                <tr key={index} className="border-b border-border">
+                  <td className="px-4 py-3"><Skeleton className="h-10 w-44" /></td>
+                  <td className="px-4 py-3 hidden sm:table-cell"><Skeleton className="h-5 w-20" /></td>
+                  <td className="px-4 py-3 hidden md:table-cell"><Skeleton className="h-5 w-24" /></td>
+                  <td className="px-4 py-3 hidden lg:table-cell"><Skeleton className="h-5 w-24" /></td>
+                  <td className="px-4 py-3"><Skeleton className="ml-auto h-8 w-20" /></td>
                 </tr>
               ))
             ) : (
-              users.map((u) => (
-                <tr key={u.id} className="border-b border-border last:border-0 hover:bg-muted/20">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <Avatar src={u.avatar} name={u.name} size="sm" />
-                      <div>
-                        <p className="text-sm font-medium">{u.name}</p>
-                        <p className="text-xs text-muted-foreground">{u.email}</p>
+              users.map((user) => (
+                <Fragment key={user.id}>
+                  <tr className="border-b border-border hover:bg-muted/20">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <Avatar src={user.avatar} name={user.name} size="sm" />
+                        <div>
+                          <p className="text-sm font-medium">{user.name}</p>
+                          <p className="text-xs text-muted-foreground">{user.email}</p>
+                        </div>
                       </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 hidden sm:table-cell">
-                    <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${roleBadgeColor(u.role)}`}>{u.role}</span>
-                  </td>
-                  <td className="px-4 py-3 hidden md:table-cell text-sm text-muted-foreground">{formatDate(u.createdAt)}</td>
-                  <td className="px-4 py-3 hidden lg:table-cell">
-                    <Badge variant={u.isVerified ? "outline" : "secondary"} className="text-xs">{u.isVerified ? "Verified" : "Unverified"}</Badge>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => deleteMutation.mutate(u.id)}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </td>
-                </tr>
+                    </td>
+                    <td className="px-4 py-3 hidden sm:table-cell">
+                      <Badge variant="outline">{user.role}</Badge>
+                    </td>
+                    <td className="px-4 py-3 hidden md:table-cell text-sm text-muted-foreground">
+                      {user.enrollments?.[0]?.section.name ?? "Not assigned"}
+                    </td>
+                    <td className="px-4 py-3 hidden lg:table-cell text-sm text-muted-foreground">
+                      {formatDate(user.createdAt)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end gap-2">
+                        <Button variant="outline" size="sm" onClick={() => setEditingUserId((current) => current === user.id ? null : user.id)}>
+                          <Pencil className="mr-2 h-4 w-4" />
+                          {editingUserId === user.id ? "Close" : "Manage"}
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => deleteMutation.mutate(user.id)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                  {editingUserId === user.id ? (
+                    <tr className="border-b border-border bg-muted/10">
+                      <td colSpan={5} className="px-4 py-4">
+                        <ManageUserPanel
+                          user={user}
+                          sections={sections}
+                          departments={departments}
+                          onSaved={() => {
+                            setEditingUserId(null);
+                            void queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+                          }}
+                        />
+                      </td>
+                    </tr>
+                  ) : null}
+                </Fragment>
               ))
             )}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+function ManageUserPanel({
+  user,
+  sections,
+  departments,
+  onSaved,
+}: {
+  user: UserRecord;
+  sections: SectionOption[];
+  departments: DepartmentOption[];
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState({
+    name: user.name,
+    handle: user.profile?.handle ?? "",
+    githubUsername: user.githubUsername ?? "",
+    bio: user.profile?.bio ?? "",
+    college: user.profile?.college ?? "",
+    batch: user.profile?.batch ?? "",
+    department: user.profile?.department ?? "",
+    isPublic: user.profile?.isPublic ?? false,
+    sectionId: user.enrollments?.[0]?.sectionId ?? "",
+    departmentId: user.departmentHeaded?.id ?? "",
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: () => api.patch(`/api/admin/users/${user.id}`, form),
+    onSuccess: () => {
+      toast.success("User updated");
+      onSaved();
+    },
+    onError: (error: Error) => toast.error(error.message || "Failed to update user"),
+  });
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <div className="space-y-4">
+        <p className="text-sm font-semibold">Profile controls</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="Full name" />
+          <Input value={form.handle} onChange={(event) => setForm((current) => ({ ...current, handle: event.target.value }))} placeholder="Public handle" />
+          <Input value={form.githubUsername} onChange={(event) => setForm((current) => ({ ...current, githubUsername: event.target.value }))} placeholder="GitHub username" />
+          <Input value={form.college} onChange={(event) => setForm((current) => ({ ...current, college: event.target.value }))} placeholder="College / institute" />
+        </div>
+        <textarea
+          className="min-h-28 w-full border border-input bg-background px-3 py-2 text-sm"
+          value={form.bio}
+          onChange={(event) => setForm((current) => ({ ...current, bio: event.target.value }))}
+          placeholder="Bio"
+        />
+      </div>
+
+      <div className="space-y-4">
+        <p className="text-sm font-semibold">Academic identity</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Input value={form.batch} onChange={(event) => setForm((current) => ({ ...current, batch: event.target.value }))} placeholder="Sessional year" />
+          <Input value={form.department} onChange={(event) => setForm((current) => ({ ...current, department: event.target.value }))} placeholder="Department label" />
+          {user.role === Role.DEPARTMENT_HEAD ? (
+            <select
+              className="h-9 border border-input bg-background px-3 text-sm sm:col-span-2"
+              value={form.departmentId}
+              onChange={(event) => setForm((current) => ({ ...current, departmentId: event.target.value }))}
+            >
+              <option value="">No department linked</option>
+              {departments.map((department) => (
+                <option key={department.id} value={department.id}>
+                  {department.name}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          {user.role === Role.STUDENT ? (
+            <select
+              className="h-9 border border-input bg-background px-3 text-sm sm:col-span-2"
+              value={form.sectionId}
+              onChange={(event) => setForm((current) => ({ ...current, sectionId: event.target.value }))}
+            >
+              <option value="">No section</option>
+              {sections.map((section) => (
+                <option key={section.id} value={section.id}>
+                  {section.name} · {section.department.code} · {section.academicYear}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          <label className="flex items-center gap-2 text-sm sm:col-span-2">
+            <input
+              type="checkbox"
+              checked={form.isPublic}
+              onChange={(event) => setForm((current) => ({ ...current, isPublic: event.target.checked }))}
+            />
+            Public profile visible
+          </label>
+        </div>
+        <div className="flex justify-end">
+          <Button onClick={() => updateMutation.mutate()} disabled={updateMutation.isPending}>
+            {updateMutation.isPending ? "Saving..." : "Save User"}
+          </Button>
+        </div>
       </div>
     </div>
   );

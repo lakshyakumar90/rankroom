@@ -48,6 +48,19 @@ export function formatPoints(points: number) {
   return points.toString();
 }
 
+export function formatRoleLabel(role?: string | null) {
+  return role ? role.replaceAll("_", " ") : "Workspace";
+}
+
+export function slugify(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-");
+}
+
 export function getDifficultyColor(difficulty: string) {
   switch (difficulty) {
     case "EASY": return "text-emerald-500";

@@ -2,18 +2,18 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { type ApiResponse, type LeaderboardEntry } from "@repo/types";
+import { Medal, Trophy } from "lucide-react";
 import { api } from "@/lib/api";
+import { formatPoints } from "@/lib/utils";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { type ApiResponse, type LeaderboardEntry } from "@repo/types";
-import { formatPoints } from "@/lib/utils";
-import { Trophy, Medal } from "lucide-react";
-import { useAuthStore } from "@/store/auth";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PageContainer, PageHeader, SectionCard } from "@/components/common/page-shell";
 
 export default function LeaderboardPage() {
   const [tab, setTab] = useState<"global" | "class" | "dept">("global");
-  const { user } = useAuthStore();
 
   const { data, isLoading } = useQuery({
     queryKey: ["leaderboard", tab],
@@ -22,96 +22,76 @@ export default function LeaderboardPage() {
 
   const entries = data?.data ?? [];
 
-  const rankIcon = (rank: number) => {
-    if (rank === 1) return <Trophy className="h-4 w-4 text-amber-400" />;
-    if (rank === 2) return <Medal className="h-4 w-4 text-zinc-400" />;
-    if (rank === 3) return <Medal className="h-4 w-4 text-amber-600" />;
-    return <span className="text-muted-foreground text-sm w-4 text-center">{rank}</span>;
-  };
-
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Leaderboard</h1>
-        <p className="text-muted-foreground">Top coders ranked by points and problems solved</p>
-      </div>
+    <PageContainer>
+      <PageHeader
+        eyebrow="Rankings"
+        title="Leaderboard"
+        description="The ranking view now uses a consistent tab system, row rhythm, and badge treatment across scopes."
+      />
 
-      {/* Tabs */}
-      <div className="flex border-b border-border">
-        {(["global", "class", "dept"] as const).map((t) => (
-          <button
-            key={t}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors capitalize ${tab === t ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
-            onClick={() => setTab(t)}
-          >
-            {t === "global" ? "Global" : t === "class" ? "My Class" : "Department"}
-          </button>
-        ))}
-      </div>
+      <Tabs value={tab} onValueChange={(value) => setTab(value as typeof tab)} className="gap-4">
+        <TabsList className="w-fit rounded-xl">
+          <TabsTrigger value="global" className="rounded-lg">Global</TabsTrigger>
+          <TabsTrigger value="class" className="rounded-lg">My class</TabsTrigger>
+          <TabsTrigger value="dept" className="rounded-lg">Department</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
-      {/* Leaderboard table */}
-      <div className="rounded-lg border border-border overflow-hidden">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-border bg-muted/30">
-              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground w-12">Rank</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">User</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">Points</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground hidden sm:table-cell">Solved</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground hidden md:table-cell">Contests</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground hidden lg:table-cell">Breakdown</th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading ? (
-              Array.from({ length: 10 }).map((_, i) => (
-                <tr key={i} className="border-b border-border">
-                  <td className="px-4 py-3"><Skeleton className="h-4 w-6" /></td>
-                  <td className="px-4 py-3"><div className="flex items-center gap-3"><Skeleton className="h-9 w-9 rounded-full" /><Skeleton className="h-4 w-32" /></div></td>
-                  <td className="px-4 py-3"><Skeleton className="h-4 w-16 ml-auto" /></td>
-                  <td className="px-4 py-3 hidden sm:table-cell"><Skeleton className="h-4 w-8 ml-auto" /></td>
-                  <td className="px-4 py-3 hidden md:table-cell"><Skeleton className="h-4 w-8 ml-auto" /></td>
-                  <td className="px-4 py-3 hidden lg:table-cell"><Skeleton className="h-4 w-24 ml-auto" /></td>
-                </tr>
-              ))
-            ) : (
-              entries.map((entry, idx) => {
-                const rank = (entry.rank ?? idx + 1);
-                const isCurrentUser = entry.userId === user?.id;
-                return (
-                  <tr
-                    key={entry.userId}
-                    className={`border-b border-border last:border-0 transition-colors ${isCurrentUser ? "bg-primary/5" : "hover:bg-muted/20"}`}
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-center">{rankIcon(rank)}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <Avatar src={entry.user.avatar} name={entry.user.name} size="sm" />
-                        <span className={`text-sm font-medium ${isCurrentUser ? "text-primary" : ""}`}>{entry.user.name}</span>
-                        {isCurrentUser && <Badge variant="secondary" className="text-xs">You</Badge>}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-right font-semibold">{formatPoints(entry.totalPoints)}</td>
-                    <td className="px-4 py-3 text-right text-muted-foreground hidden sm:table-cell">{entry.problemsSolved}</td>
-                    <td className="px-4 py-3 text-right text-muted-foreground hidden md:table-cell">{entry.contestsParticipated}</td>
-                    <td className="px-4 py-3 text-right hidden lg:table-cell">
-                      <div className="flex items-center justify-end gap-1 text-xs">
-                        <span className="text-emerald-500">{entry.easySolved}E</span>
-                        <span className="text-muted-foreground">/</span>
-                        <span className="text-amber-500">{entry.mediumSolved}M</span>
-                        <span className="text-muted-foreground">/</span>
-                        <span className="text-red-500">{entry.hardSolved}H</span>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
+      <SectionCard className="p-0">
+        <div className="grid grid-cols-[80px_minmax(0,1fr)_120px_120px] gap-4 border-b border-border/70 px-5 py-3 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+          <span>Rank</span>
+          <span>Participant</span>
+          <span>Points</span>
+          <span>Solved</span>
+        </div>
+
+        {isLoading ? (
+          <div className="flex flex-col gap-3 p-5">
+            {Array.from({ length: 10 }).map((_, index) => (
+              <Skeleton key={index} className="h-16 rounded-xl" />
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-col divide-y divide-border/70">
+            {entries.map((entry, index) => (
+              <div
+                key={entry.userId}
+                className="grid grid-cols-[80px_minmax(0,1fr)_120px_120px] items-center gap-4 px-5 py-4"
+              >
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  {index < 3 ? (
+                    index === 0 ? (
+                      <Trophy className="size-4 text-primary" />
+                    ) : (
+                      <Medal className="size-4 text-muted-foreground" />
+                    )
+                  ) : null}
+                  <span>#{index + 1}</span>
+                </div>
+
+                <div className="flex min-w-0 items-center gap-3">
+                  <Avatar src={entry.user.avatar} name={entry.user.name} />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold">{entry.user.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {entry.user.githubUsername ? `github.com/${entry.user.githubUsername}` : "Public profile available"}
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  <Badge variant="secondary" className="rounded-full px-3 py-1">
+                    {formatPoints(entry.totalPoints)}
+                  </Badge>
+                </div>
+
+                <p className="text-sm text-muted-foreground">{entry.problemsSolved}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </SectionCard>
+    </PageContainer>
   );
 }

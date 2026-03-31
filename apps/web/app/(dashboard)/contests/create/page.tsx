@@ -4,24 +4,32 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { useAuthStore } from "@/store/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { type ApiResponse, type Problem, Role } from "@repo/types";
+import { type ApiResponse, type Problem } from "@repo/types";
 import { createContestSchema } from "@repo/validators";
 import { toast } from "sonner";
-import { useAuthStore } from "@/store/auth";
 import { ArrowLeft, X, Search } from "lucide-react";
 import Link from "next/link";
 import { z } from "zod";
 
 type CreateContestInput = z.infer<typeof createContestSchema>;
+type ClassOption = { id: string; name: string; code: string; department?: { name: string; code: string } };
+type StudentOption = {
+  student: {
+    id: string;
+    name: string;
+    email: string;
+  };
+};
 
 export default function CreateContestPage() {
   const router = useRouter();
-  const { user } = useAuthStore();
+  const user = useAuthStore((state) => state.user);
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -29,14 +37,10 @@ export default function CreateContestPage() {
   const [endTime, setEndTime] = useState("");
   const [type, setType] = useState<"PUBLIC" | "PRIVATE" | "INSTITUTIONAL">("PUBLIC");
   const [rules, setRules] = useState("");
+  const [sectionId, setSectionId] = useState("");
+  const [participantIds, setParticipantIds] = useState<string[]>([]);
   const [selectedProblems, setSelectedProblems] = useState<Problem[]>([]);
   const [problemSearch, setProblemSearch] = useState("");
-
-  // Redirect non-admin/teacher
-  if (user && user.role === Role.STUDENT) {
-    router.replace("/contests");
-    return null;
-  }
 
   const { data: problemsData } = useQuery({
     queryKey: ["problems-list", problemSearch],
@@ -46,6 +50,21 @@ export default function CreateContestPage() {
       ),
     enabled: true,
   });
+
+  const { data: classesData } = useQuery({
+    queryKey: ["contest-create", "classes"],
+    queryFn: () => api.get<ApiResponse<ClassOption[]>>("/api/users/me/classes"),
+    enabled: !!user,
+  });
+
+  const { data: studentsData } = useQuery({
+    queryKey: ["contest-create", "students", sectionId],
+    queryFn: () => api.get<ApiResponse<StudentOption[]>>(`/api/users/section/${sectionId}/students`),
+    enabled: !!sectionId,
+  });
+
+  const sectionOptions = classesData?.data ?? [];
+  const studentOptions = studentsData?.data ?? [];
 
   const createMutation = useMutation({
     mutationFn: (body: CreateContestInput) =>
@@ -72,6 +91,8 @@ export default function CreateContestPage() {
       type,
       rules: rules || undefined,
       problemIds: selectedProblems.map((p) => p.id),
+      sectionId: sectionId || undefined,
+      participantIds,
     });
 
     if (!parsed.success) {
@@ -176,6 +197,49 @@ export default function CreateContestPage() {
                 ))}
               </div>
             </div>
+
+            {sectionOptions.length > 0 ? (
+              <div className="space-y-2">
+                <Label htmlFor="sectionId">Section scope</Label>
+                <select
+                  id="sectionId"
+                  value={sectionId}
+                  onChange={(e) => setSectionId(e.target.value)}
+                  className="h-9 w-full border border-input bg-background px-3 text-sm"
+                >
+                  <option value="">Department / open scope</option>
+                  {sectionOptions.map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+
+            {sectionId ? (
+              <div className="space-y-2">
+                <Label>Selected students (optional)</Label>
+                <div className="max-h-44 space-y-2 overflow-y-auto border border-border p-3">
+                  {studentOptions.map((entry) => (
+                    <label key={entry.student.id} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={participantIds.includes(entry.student.id)}
+                        onChange={() =>
+                          setParticipantIds((current) =>
+                            current.includes(entry.student.id)
+                              ? current.filter((id) => id !== entry.student.id)
+                              : [...current, entry.student.id]
+                          )
+                        }
+                      />
+                      <span>{entry.student.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             <div className="space-y-2">
               <Label htmlFor="rules">Rules (optional)</Label>

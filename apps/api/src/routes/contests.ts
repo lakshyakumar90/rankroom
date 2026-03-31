@@ -1,20 +1,34 @@
-import { Router } from "express";
+import { Router, type Router as ExpressRouter } from "express";
 import { prisma } from "@repo/database";
-import { authenticate, requireRole, optionalAuth } from "../middleware/auth";
+import { authenticate, canAccessSection, optionalAuth } from "../middleware/auth";
+import { requirePermission } from "../middleware/permissions";
 import { validate } from "../middleware/validate";
 import { AppError } from "../middleware/error";
 import { createContestSchema, paginationSchema } from "@repo/validators";
-import { submissionQueue } from "../workers/submissionWorker";
-import { emitContestStandingUpdate } from "../lib/socket";
-import { Role } from "@repo/types";
+import { submissionQueue } from "../jobs/submissionWorker";
+import { logActivity } from "../lib/activity";
 import { z } from "zod";
 
-const router = Router();
+const router: ExpressRouter = Router();
 
 const contestFiltersSchema = paginationSchema.extend({
   status: z.enum(["UPCOMING", "LIVE", "ENDED"]).optional(),
   type: z.enum(["PUBLIC", "PRIVATE", "INSTITUTIONAL"]).optional(),
 });
+
+function buildContestVisibilityWhere(user: Express.Request["user"]) {
+  if (!user || user.role !== "STUDENT") {
+    return {};
+  }
+
+  return {
+    OR: [
+      { sectionId: null, audience: { none: {} } },
+      { sectionId: { in: user.scope.sectionIds }, audience: { none: {} } },
+      { audience: { some: { studentId: user.id } } },
+    ],
+  };
+}
 
 // GET /api/contests
 router.get("/", optionalAuth, validate(contestFiltersSchema, "query"), async (req, res, next) => {
@@ -28,8 +42,11 @@ router.get("/", optionalAuth, validate(contestFiltersSchema, "query"), async (re
     await prisma.contest.updateMany({ where: { status: "LIVE", endTime: { lte: now } }, data: { status: "ENDED" } });
 
     const where = {
-      ...(status ? { status: status as "UPCOMING" | "LIVE" | "ENDED" } : {}),
-      ...(type ? { type: type as "PUBLIC" | "PRIVATE" | "INSTITUTIONAL" } : {}),
+      AND: [
+        ...(status ? [{ status: status as "UPCOMING" | "LIVE" | "ENDED" }] : []),
+        ...(type ? [{ type: type as "PUBLIC" | "PRIVATE" | "INSTITUTIONAL" }] : []),
+        buildContestVisibilityWhere(req.user),
+      ],
     };
 
     const [contests, total] = await Promise.all([
@@ -58,11 +75,26 @@ router.get("/:id", optionalAuth, async (req, res, next) => {
     const contest = await prisma.contest.findUnique({
       where: { id: req.params.id },
       include: {
+        audience: { select: { studentId: true } },
         createdBy: { select: { id: true, name: true } },
         _count: { select: { registrations: true, problems: true } },
       },
     });
     if (!contest) throw new AppError("Contest not found", 404);
+    if (
+      req.user?.role === "STUDENT" &&
+      contest.audience.length > 0 &&
+      !contest.audience.some((entry) => entry.studentId === req.user?.id)
+    ) {
+      throw new AppError("Contest not found", 404);
+    }
+    if (
+      req.user?.role === "STUDENT" &&
+      contest.sectionId &&
+      !req.user.scope.sectionIds.includes(contest.sectionId)
+    ) {
+      throw new AppError("Contest not found", 404);
+    }
 
     let isRegistered = false;
     if (req.user) {
@@ -79,9 +111,32 @@ router.get("/:id", optionalAuth, async (req, res, next) => {
 });
 
 // POST /api/contests - create contest
-router.post("/", authenticate, requireRole(Role.ADMIN, Role.TEACHER), validate(createContestSchema), async (req, res, next) => {
+router.post("/", authenticate, requirePermission("contests:create"), validate(createContestSchema), async (req, res, next) => {
   try {
-    const { problemIds, ...rest } = req.body as { problemIds: string[]; [key: string]: unknown };
+    const { problemIds, participantIds = [], ...rest } = req.body as { problemIds: string[]; participantIds?: string[]; [key: string]: unknown };
+    if (typeof rest.sectionId === "string" && req.user!.role !== "SUPER_ADMIN" && req.user!.role !== "ADMIN") {
+      const allowed = await canAccessSection(req.user!, rest.sectionId);
+      if (!allowed) {
+        throw new AppError("Forbidden", 403);
+      }
+    }
+
+    if (participantIds.length > 0) {
+      const eligibleStudents = await prisma.user.findMany({
+        where: {
+          id: { in: participantIds },
+          role: "STUDENT",
+          ...(typeof rest.sectionId === "string"
+            ? { enrollments: { some: { sectionId: rest.sectionId } } }
+            : {}),
+        },
+        select: { id: true },
+      });
+
+      if (eligibleStudents.length !== participantIds.length) {
+        throw new AppError("Some selected students are outside the contest scope", 400);
+      }
+    }
 
     const contest = await prisma.contest.create({
       data: {
@@ -92,6 +147,22 @@ router.post("/", authenticate, requireRole(Role.ADMIN, Role.TEACHER), validate(c
         problems: {
           create: problemIds.map((id, idx) => ({ problemId: id, order: idx + 1, points: 100 })),
         },
+        audience: participantIds.length
+          ? {
+              createMany: {
+                data: participantIds.map((studentId) => ({ studentId })),
+                skipDuplicates: true,
+              },
+            }
+          : undefined,
+        registrations: participantIds.length
+          ? {
+              createMany: {
+                data: participantIds.map((userId) => ({ userId })),
+                skipDuplicates: true,
+              },
+            }
+          : undefined,
       },
       include: { problems: { include: { problem: { select: { title: true, difficulty: true } } } } },
     });
@@ -103,7 +174,7 @@ router.post("/", authenticate, requireRole(Role.ADMIN, Role.TEACHER), validate(c
 });
 
 // PATCH /api/contests/:id
-router.patch("/:id", authenticate, requireRole(Role.ADMIN, Role.TEACHER), async (req, res, next) => {
+router.patch("/:id", authenticate, requirePermission("contests:create"), async (req, res, next) => {
   try {
     const contest = await prisma.contest.update({ where: { id: req.params.id }, data: req.body });
     res.json({ success: true, data: contest });
@@ -118,12 +189,31 @@ router.post("/:id/register", authenticate, async (req, res, next) => {
     const contest = await prisma.contest.findUnique({ where: { id: req.params.id } });
     if (!contest) throw new AppError("Contest not found", 404);
     if (contest.status === "ENDED") throw new AppError("Contest has ended", 400);
+    if (contest.endTime <= new Date()) throw new AppError("Contest registration window is closed", 400);
+    const audienceCount = await prisma.contestAudience.count({ where: { contestId: contest.id } });
+    if (audienceCount > 0) {
+      const invited = await prisma.contestAudience.findUnique({
+        where: { contestId_studentId: { contestId: contest.id, studentId: req.user!.id } },
+      });
+      if (!invited && req.user!.role === "STUDENT") {
+        throw new AppError("You are not invited to this contest", 403);
+      }
+    }
+    if (
+      req.user!.role === "STUDENT" &&
+      contest.sectionId &&
+      !req.user!.scope.sectionIds.includes(contest.sectionId)
+    ) {
+      throw new AppError("Forbidden", 403);
+    }
 
     const registration = await prisma.contestRegistration.upsert({
       where: { contestId_userId: { contestId: req.params.id, userId: req.user!.id } },
       update: {},
       create: { contestId: req.params.id, userId: req.user!.id },
     });
+
+    await logActivity(req.user!.id, "contest.registered", { contestId: req.params.id });
 
     res.json({ success: true, data: registration });
   } catch (err) {
@@ -150,6 +240,12 @@ router.get("/:id/problems", optionalAuth, async (req, res, next) => {
   try {
     const contest = await prisma.contest.findUnique({ where: { id: req.params.id } });
     if (!contest) throw new AppError("Contest not found", 404);
+    const invited = req.user
+      ? await prisma.contestAudience.findUnique({
+          where: { contestId_studentId: { contestId: req.params.id, studentId: req.user.id } },
+        })
+      : null;
+    const audienceCount = await prisma.contestAudience.count({ where: { contestId: req.params.id } });
 
     // Only registered users can see problems for live/ended contests
     if (contest.status !== "UPCOMING" && req.user) {
@@ -157,6 +253,9 @@ router.get("/:id/problems", optionalAuth, async (req, res, next) => {
         where: { contestId_userId: { contestId: req.params.id, userId: req.user.id } },
       });
       if (!reg && req.user.role === "STUDENT") throw new AppError("You must be registered to view problems", 403);
+    }
+    if (req.user?.role === "STUDENT" && audienceCount > 0 && !invited) {
+      throw new AppError("Forbidden", 403);
     }
 
     const problems = await prisma.contestProblem.findMany({
@@ -188,17 +287,48 @@ router.post("/:id/submit", authenticate, async (req, res, next) => {
 
     if (!contest) throw new AppError("Contest not found", 404);
     if (contest.status !== "LIVE") throw new AppError("Contest is not live", 400);
+    if (contest.endTime <= new Date()) throw new AppError("Contest has already ended", 400);
+    const audienceCount = await prisma.contestAudience.count({ where: { contestId } });
+    if (audienceCount > 0) {
+      const invited = await prisma.contestAudience.findUnique({
+        where: { contestId_studentId: { contestId, studentId: req.user!.id } },
+      });
+      if (!invited && req.user!.role === "STUDENT") {
+        throw new AppError("You are not invited to this contest", 403);
+      }
+    }
     if (!registration && req.user!.role === "STUDENT") throw new AppError("Not registered for this contest", 403);
+    if (
+      req.user!.role === "STUDENT" &&
+      contest.sectionId &&
+      !req.user!.scope.sectionIds.includes(contest.sectionId)
+    ) {
+      throw new AppError("Forbidden", 403);
+    }
+
+    const existingAttempt = await prisma.submission.findFirst({
+      where: {
+        contestId,
+        problemId,
+        userId: req.user!.id,
+      },
+      select: { id: true, status: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (existingAttempt) {
+      throw new AppError("You have already attempted this problem in the contest", 409);
+    }
 
     const submission = await prisma.submission.create({
       data: { userId: req.user!.id, problemId, code, language, status: "PENDING", contestId },
     });
 
-    await submissionQueue.add("submission", {
+    await submissionQueue.add("submission" as const, {
       submissionId: submission.id,
       userId: req.user!.id,
       problemId,
-      code,
+      source_code: code,
       language,
       contestId,
     });

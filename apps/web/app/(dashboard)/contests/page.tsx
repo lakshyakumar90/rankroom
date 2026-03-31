@@ -7,12 +7,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { type ApiResponse, type Contest, ContestStatus } from "@repo/types";
+import { type ApiResponse, type Contest } from "@repo/types";
 import { formatDateTime, getContestStatusVariant } from "@/lib/utils";
 import { Calendar, Users, Trophy } from "lucide-react";
 import Link from "next/link";
 import { useAuthStore } from "@/store/auth";
-import { Role } from "@repo/types";
+import { hasPermission } from "@/lib/permissions";
 
 export default function ContestsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("");
@@ -42,7 +42,7 @@ export default function ContestsPage() {
           <h1 className="text-2xl font-bold tracking-tight">Contests</h1>
           <p className="text-muted-foreground">Compete and test your skills under pressure</p>
         </div>
-        {(user?.role === Role.ADMIN || user?.role === Role.TEACHER) && (
+        {hasPermission(user?.role, "contests:create") && (
           <Link href="/contests/create">
             <Button size="sm">Create Contest</Button>
           </Link>

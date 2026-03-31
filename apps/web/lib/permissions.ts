@@ -1,0 +1,120 @@
+import { Role, type PermissionKey } from "@repo/types";
+import { isElevatedRole } from "@/lib/route-access";
+
+const PERMISSIONS: Record<PermissionKey, Array<Role | "*">> = {
+  "users:create": [Role.SUPER_ADMIN, Role.ADMIN],
+  "users:delete": [Role.SUPER_ADMIN, Role.ADMIN],
+  "users:read:any": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD],
+  "users:read:section": [Role.CLASS_COORDINATOR, Role.TEACHER],
+  "departments:create": [Role.SUPER_ADMIN, Role.ADMIN],
+  "departments:update": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD],
+  "departments:delete": [Role.SUPER_ADMIN, Role.ADMIN],
+  "sections:create": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD],
+  "sections:update": [
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.DEPARTMENT_HEAD,
+    Role.CLASS_COORDINATOR,
+  ],
+  "sections:delete": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD],
+  "attendance:create": [
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.DEPARTMENT_HEAD,
+    Role.CLASS_COORDINATOR,
+    Role.TEACHER,
+  ],
+  "attendance:update": [
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.DEPARTMENT_HEAD,
+    Role.CLASS_COORDINATOR,
+    Role.TEACHER,
+  ],
+  "attendance:read:any": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD],
+  "attendance:read:section": [Role.CLASS_COORDINATOR, Role.TEACHER],
+  "attendance:read:own": [Role.STUDENT],
+  "grades:create": [
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.DEPARTMENT_HEAD,
+    Role.CLASS_COORDINATOR,
+    Role.TEACHER,
+  ],
+  "grades:update": [
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.DEPARTMENT_HEAD,
+    Role.CLASS_COORDINATOR,
+    Role.TEACHER,
+  ],
+  "grades:read:any": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD],
+  "grades:read:section": [Role.CLASS_COORDINATOR, Role.TEACHER],
+  "grades:read:own": [Role.STUDENT],
+  "assignments:create": [
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.DEPARTMENT_HEAD,
+    Role.CLASS_COORDINATOR,
+    Role.TEACHER,
+  ],
+  "assignments:delete": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD],
+  "assignments:grade": [
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.DEPARTMENT_HEAD,
+    Role.CLASS_COORDINATOR,
+    Role.TEACHER,
+  ],
+  "assignments:submit": [Role.STUDENT],
+  "contests:create": [
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.DEPARTMENT_HEAD,
+    Role.CLASS_COORDINATOR,
+    Role.TEACHER,
+  ],
+  "contests:delete": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD],
+  "contests:participate": [Role.STUDENT],
+  "hackathons:create": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD, Role.CLASS_COORDINATOR, Role.TEACHER],
+  "hackathons:update": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD, Role.CLASS_COORDINATOR, Role.TEACHER],
+  "hackathons:delete": [Role.SUPER_ADMIN, Role.ADMIN],
+  "hackathons:register": [Role.STUDENT],
+  "problems:create": [
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.DEPARTMENT_HEAD,
+    Role.CLASS_COORDINATOR,
+    Role.TEACHER,
+  ],
+  "problems:delete": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD],
+  "profile:update:own": [
+    Role.STUDENT,
+    Role.TEACHER,
+    Role.CLASS_COORDINATOR,
+    Role.DEPARTMENT_HEAD,
+    Role.ADMIN,
+  ],
+  "profile:view:public": ["*"],
+  "profile:view:private": [
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.DEPARTMENT_HEAD,
+    Role.CLASS_COORDINATOR,
+  ],
+  "leaderboard:view": ["*"],
+  "analytics:platform": [Role.SUPER_ADMIN, Role.ADMIN],
+  "analytics:department": [Role.DEPARTMENT_HEAD],
+  "analytics:section": [Role.CLASS_COORDINATOR, Role.TEACHER],
+  "analytics:own": [Role.STUDENT],
+  "notifications:send:platform": [Role.SUPER_ADMIN, Role.ADMIN],
+  "notifications:send:department": [Role.DEPARTMENT_HEAD],
+  "notifications:send:section": [Role.CLASS_COORDINATOR],
+};
+
+export function hasPermission(role: Role | null | undefined, permission: PermissionKey) {
+  if (!role) return false;
+  if (isElevatedRole(role)) return true;
+  const allowedRoles = PERMISSIONS[permission];
+  return allowedRoles.includes("*") || allowedRoles.includes(role);
+}

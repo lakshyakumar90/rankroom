@@ -3,46 +3,130 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { ThemeProvider } from "next-themes";
-import { useState, useEffect } from "react";
+import { Suspense, useState, useEffect, useRef } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useAuthStore } from "@/store/auth";
-import { api } from "@/lib/api";
-import type { ApiResponse } from "@repo/types";
+import { SocketProvider } from "@/providers/SocketProvider";
+import { toast } from "sonner";
+import { clearAuth, hydrateUser } from "@/lib/auth";
+import {
+  buildForbiddenRedirect,
+  buildLoginRedirect,
+  canAccessRoute,
+  getDefaultRouteForRole,
+  isAuthRoute,
+  isProtectedRoute,
+} from "@/lib/route-access";
+import type { AuthUser } from "@/store/auth";
 
 function AuthInitializer() {
-  const { setUser, clearUser } = useAuthStore();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const { user, isLoading, clearUser, setLoading } = useAuthStore();
+  const isInitializingRef = useRef(true);
 
   useEffect(() => {
     const supabase = createClient();
+    isInitializingRef.current = true;
 
-    // Load current user
-    async function loadUser() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        try {
-          const data = await api.get<ApiResponse<{ id: string; supabaseId: string; email: string; name: string; role: string; avatar?: string | null; profile?: { totalPoints: number; rank?: number | null; streak: number } | null }>>("/api/auth/me");
-          if (data.data) setUser(data.data as Parameters<typeof setUser>[0]);
-        } catch {
+    async function restoreSession() {
+      setLoading(true);
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (!session) {
           clearUser();
+          return;
         }
-      } else {
+
+        const hydratedUser = await hydrateUser();
+        if (hydratedUser) return;
+
+        clearAuth();
+      } finally {
+        isInitializingRef.current = false;
+      }
+    }
+
+    async function refreshAuthUser() {
+      const hydratedUser = await hydrateUser();
+      if (!hydratedUser) {
         clearUser();
       }
     }
 
-    loadUser();
+    void restoreSession();
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (isInitializingRef.current) {
+        return;
+      }
+
       if (event === "SIGNED_OUT" || !session) {
         clearUser();
-      } else if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
-        loadUser();
+        return;
+      }
+
+      if (event === "SIGNED_IN") {
+        if (!useAuthStore.getState().user) {
+          await refreshAuthUser();
+        }
+        return;
+      }
+
+      if (event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
+        await refreshAuthUser();
       }
     });
 
     return () => subscription.unsubscribe();
-  }, [setUser, clearUser]);
+  }, [clearUser, setLoading]);
+
+  useEffect(() => {
+    if (isLoading) {
+      return;
+    }
+
+    const currentSearch = searchParams.toString();
+
+    if (user && isAuthRoute(pathname)) {
+      router.replace(getDefaultRouteForRole(user.role));
+      return;
+    }
+
+    if (!user && isProtectedRoute(pathname)) {
+      router.replace(buildLoginRedirect(pathname, currentSearch ? `?${currentSearch}` : ""));
+      return;
+    }
+
+    if (user && !canAccessRoute(pathname, user.role)) {
+      router.replace(
+        buildForbiddenRedirect(
+          user.role,
+          `${pathname}${currentSearch ? `?${currentSearch}` : ""}`
+        )
+      );
+    }
+  }, [isLoading, pathname, router, searchParams, user]);
+
+  useEffect(() => {
+    const deniedFrom = searchParams.get("deniedFrom");
+    if (!deniedFrom) {
+      return;
+    }
+
+    toast.error("You do not have access to that page.");
+
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("deniedFrom");
+    router.replace(next.toString() ? `${pathname}?${next.toString()}` : pathname);
+  }, [pathname, router, searchParams]);
 
   return null;
 }
@@ -61,11 +145,15 @@ export function Providers({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
       <QueryClientProvider client={queryClient}>
-        <AuthInitializer />
-        {children}
-        <ReactQueryDevtools initialIsOpen={false} />
+        <Suspense fallback={null}>
+          <AuthInitializer />
+        </Suspense>
+        <SocketProvider>
+          {children}
+          <ReactQueryDevtools initialIsOpen={false} />
+        </SocketProvider>
       </QueryClientProvider>
     </ThemeProvider>
   );

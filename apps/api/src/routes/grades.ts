@@ -1,66 +1,256 @@
-import { Router } from "express";
+import { Router, type Router as ExpressRouter } from "express";
 import { prisma } from "@repo/database";
-import { authenticate, requireRole } from "../middleware/auth";
+import { Role } from "@repo/types";
+import { authenticate, canAccessSection } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { AppError } from "../middleware/error";
-import { createGradeSchema, bulkCreateGradesSchema } from "@repo/validators";
-import { Role } from "@repo/types";
+import { bulkCreateGradesSchema, createGradeSchema } from "@repo/validators";
+import { logActivity } from "../lib/activity";
+import { recomputeSectionLeaderboard } from "../services/leaderboard.service";
 
-const router = Router();
+const router: ExpressRouter = Router();
 router.use(authenticate);
 
-// POST /api/grades - create grade
-router.post("/", requireRole(Role.TEACHER, Role.ADMIN), validate(createGradeSchema), async (req, res, next) => {
+function canManageGrades(role: Role) {
+  return [
+    Role.SUPER_ADMIN,
+    Role.ADMIN,
+    Role.DEPARTMENT_HEAD,
+    Role.CLASS_COORDINATOR,
+    Role.TEACHER,
+  ].includes(role);
+}
+
+async function ensureSubjectGradeAccess(
+  user: NonNullable<Express.Request["user"]>,
+  subjectId: string
+) {
+  const subject = await prisma.subject.findUnique({
+    where: { id: subjectId },
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      sectionId: true,
+      departmentId: true,
+      section: { select: { id: true, name: true, code: true } },
+    },
+  });
+
+  if (!subject) {
+    throw new AppError("Subject not found", 404);
+  }
+
+  const allowed = await canAccessSection(
+    user,
+    subject.sectionId,
+    user.role === Role.TEACHER ? subject.id : undefined
+  );
+
+  if (!allowed || !canManageGrades(user.role)) {
+    throw new AppError("Forbidden", 403);
+  }
+
+  return subject;
+}
+
+async function ensureGradeAccess(
+  user: NonNullable<Express.Request["user"]>,
+  gradeId: string
+) {
+  const grade = await prisma.grade.findUnique({
+    where: { id: gradeId },
+    include: {
+      subject: {
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          sectionId: true,
+          section: { select: { id: true, name: true, code: true } },
+        },
+      },
+      student: { select: { id: true, name: true } },
+    },
+  });
+
+  if (!grade) {
+    throw new AppError("Grade not found", 404);
+  }
+
+  if (user.role === Role.STUDENT) {
+    if (grade.studentId !== user.id) {
+      throw new AppError("Forbidden", 403);
+    }
+    return grade;
+  }
+
+  const allowed = await canAccessSection(
+    user,
+    grade.subject.sectionId,
+    user.role === Role.TEACHER ? grade.subjectId : undefined
+  );
+
+  if (!allowed || !canManageGrades(user.role)) {
+    throw new AppError("Forbidden", 403);
+  }
+
+  return grade;
+}
+
+router.post("/", validate(createGradeSchema), async (req, res, next) => {
   try {
+    const subject = await ensureSubjectGradeAccess(req.user!, req.body.subjectId);
+
     const grade = await prisma.grade.create({
-      data: { ...req.body, teacherId: req.user!.id },
+      data: {
+        studentId: req.body.studentId,
+        subjectId: req.body.subjectId,
+        teacherId: req.user!.id,
+        examType: req.body.examType,
+        marks: req.body.marks,
+        maxMarks: req.body.maxMarks,
+        semester: req.body.semester,
+        remarks: req.body.remarks,
+      },
       include: {
         student: { select: { id: true, name: true } },
         subject: { select: { id: true, name: true, code: true } },
       },
     });
+
+    await prisma.notification.create({
+      data: {
+        userId: grade.studentId,
+        type: "ASSIGNMENT_GRADED",
+        title: "Grade Published",
+        message: `${grade.subject.name} ${grade.examType.toLowerCase()} marks published: ${grade.marks}/${grade.maxMarks}`,
+        link: `/grades/student/${grade.studentId}`,
+        entityId: grade.id,
+        entityType: "GRADE",
+        targetRole: Role.STUDENT,
+        targetSectionId: subject.sectionId,
+        targetDepartmentId: subject.departmentId,
+      },
+    });
+
+    await logActivity(req.user!.id, "grade.created", {
+      gradeId: grade.id,
+      studentId: grade.studentId,
+      subjectId: grade.subjectId,
+    });
+
+    await recomputeSectionLeaderboard(subject.sectionId);
+
     res.status(201).json({ success: true, data: grade });
-  } catch (err) {
-    next(err);
+  } catch (error) {
+    next(error);
   }
 });
 
-// POST /api/grades/bulk - bulk create grades
-router.post("/bulk", requireRole(Role.TEACHER, Role.ADMIN), validate(bulkCreateGradesSchema), async (req, res, next) => {
+router.post("/bulk", validate(bulkCreateGradesSchema), async (req, res, next) => {
   try {
     const { subjectId, examType, maxMarks, semester, grades } = req.body as {
       subjectId: string;
-      examType: string;
+      examType: "MID" | "FINAL" | "INTERNAL" | "ASSIGNMENT";
       maxMarks: number;
       semester: number;
       grades: { studentId: string; marks: number; remarks?: string }[];
     };
 
-    const created = await prisma.$transaction(
-      grades.map((g) =>
-        prisma.grade.create({
-          data: { subjectId, examType: examType as "MID" | "FINAL" | "INTERNAL" | "ASSIGNMENT", maxMarks, semester, teacherId: req.user!.id, ...g },
-        })
-      )
-    );
+    const subject = await ensureSubjectGradeAccess(req.user!, subjectId);
 
-    res.status(201).json({ success: true, data: created, message: `${created.length} grades created` });
-  } catch (err) {
-    next(err);
+    const upserted = await prisma.$transaction(async (tx) => {
+      const results = [];
+
+      for (const entry of grades) {
+        const existing = await tx.grade.findFirst({
+          where: {
+            studentId: entry.studentId,
+            subjectId,
+            examType,
+            semester,
+          },
+          select: { id: true },
+        });
+
+        if (existing) {
+          results.push(
+            await tx.grade.update({
+              where: { id: existing.id },
+              data: {
+                marks: entry.marks,
+                remarks: entry.remarks,
+                maxMarks,
+                teacherId: req.user!.id,
+              },
+            })
+          );
+          continue;
+        }
+
+        results.push(
+          await tx.grade.create({
+            data: {
+              studentId: entry.studentId,
+              subjectId,
+              teacherId: req.user!.id,
+              examType,
+              marks: entry.marks,
+              maxMarks,
+              semester,
+              remarks: entry.remarks,
+            },
+          })
+        );
+      }
+
+      return results;
+    });
+
+    await logActivity(req.user!.id, "grade.bulk_created", {
+      subjectId,
+      count: upserted.length,
+      examType,
+      semester,
+    });
+
+    await recomputeSectionLeaderboard(subject.sectionId);
+
+    res.status(201).json({
+      success: true,
+      data: upserted,
+      message: `${upserted.length} grades saved`,
+    });
+  } catch (error) {
+    next(error);
   }
 });
 
-// GET /api/grades/class/:classId - all grades for a class
-router.get("/class/:classId", requireRole(Role.TEACHER, Role.ADMIN), async (req, res, next) => {
+router.get(["/section/:sectionId", "/class/:classId"], async (req, res, next) => {
   try {
+    if (!canManageGrades(req.user!.role)) {
+      throw new AppError("Forbidden", 403);
+    }
+
+    const sectionId = req.params.sectionId ?? req.params.classId;
+    if (!sectionId) {
+      throw new AppError("Section id is required", 400);
+    }
+
+    const allowed = await canAccessSection(req.user!, sectionId);
+    if (!allowed) {
+      throw new AppError("Forbidden", 403);
+    }
+
     const { subjectId, examType, semester } = req.query as Record<string, string>;
 
     const grades = await prisma.grade.findMany({
       where: {
-        subject: { batchId: req.params.classId },
+        subject: { sectionId },
         ...(subjectId ? { subjectId } : {}),
         ...(examType ? { examType: examType as "MID" | "FINAL" | "INTERNAL" | "ASSIGNMENT" } : {}),
-        ...(semester ? { semester: parseInt(semester) } : {}),
+        ...(semester ? { semester: Number.parseInt(semester, 10) } : {}),
       },
       include: {
         student: { select: { id: true, name: true } },
@@ -70,17 +260,31 @@ router.get("/class/:classId", requireRole(Role.TEACHER, Role.ADMIN), async (req,
     });
 
     res.json({ success: true, data: grades });
-  } catch (err) {
-    next(err);
+  } catch (error) {
+    next(error);
   }
 });
 
-// GET /api/grades/student/:studentId - student grades
 router.get("/student/:studentId", async (req, res, next) => {
   try {
-    // Students can only see their own grades
-    if (req.user!.role === "STUDENT" && req.user!.id !== req.params.studentId) {
+    if (req.user!.role === Role.STUDENT && req.user!.id !== req.params.studentId) {
       throw new AppError("Forbidden", 403);
+    }
+
+    if (req.user!.role !== Role.STUDENT) {
+      const enrollment = await prisma.enrollment.findFirst({
+        where: { studentId: req.params.studentId },
+        select: { sectionId: true },
+      });
+
+      if (!enrollment) {
+        throw new AppError("Student enrollment not found", 404);
+      }
+
+      const allowed = await canAccessSection(req.user!, enrollment.sectionId);
+      if (!allowed) {
+        throw new AppError("Forbidden", 403);
+      }
     }
 
     const grades = await prisma.grade.findMany({
@@ -89,53 +293,74 @@ router.get("/student/:studentId", async (req, res, next) => {
       orderBy: { createdAt: "desc" },
     });
 
-    // Calculate CGPA per subject
-    const subjectGrades = new Map<string, { name: string; grades: typeof grades }>();
-    for (const g of grades) {
-      if (!subjectGrades.has(g.subjectId)) {
-        subjectGrades.set(g.subjectId, { name: g.subject.name, grades: [] });
-      }
-      subjectGrades.get(g.subjectId)!.grades.push(g);
+    res.json({ success: true, data: grades });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/:id", async (req, res, next) => {
+  try {
+    const grade = await ensureGradeAccess(req.user!, req.params.id);
+    if (req.user!.role === Role.STUDENT) {
+      throw new AppError("Students cannot update grades", 403);
     }
 
-    res.json({ success: true, data: grades });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// PATCH /api/grades/:id
-router.patch("/:id", requireRole(Role.TEACHER, Role.ADMIN), async (req, res, next) => {
-  try {
-    const grade = await prisma.grade.update({
-      where: { id: req.params.id },
-      data: req.body,
+    const updated = await prisma.grade.update({
+      where: { id: grade.id },
+      data: {
+        ...(req.body.marks !== undefined ? { marks: req.body.marks } : {}),
+        ...(req.body.maxMarks !== undefined ? { maxMarks: req.body.maxMarks } : {}),
+        ...(req.body.remarks !== undefined ? { remarks: req.body.remarks } : {}),
+        ...(req.body.semester !== undefined ? { semester: req.body.semester } : {}),
+        teacherId: req.user!.id,
+      },
     });
-    res.json({ success: true, data: grade });
-  } catch (err) {
-    next(err);
+
+    await logActivity(req.user!.id, "grade.updated", { gradeId: updated.id });
+    await recomputeSectionLeaderboard(grade.subject.sectionId);
+
+    res.json({ success: true, data: updated });
+  } catch (error) {
+    next(error);
   }
 });
 
-// GET /api/grades/subject/:subjectId/report
-router.get("/subject/:subjectId/report", requireRole(Role.TEACHER, Role.ADMIN), async (req, res, next) => {
+router.get("/subject/:subjectId/report", async (req, res, next) => {
   try {
+    const subject = await ensureSubjectGradeAccess(req.user!, req.params.subjectId);
+
     const grades = await prisma.grade.findMany({
-      where: { subjectId: req.params.subjectId },
+      where: { subjectId: subject.id },
       include: { student: { select: { id: true, name: true } } },
       orderBy: [{ examType: "asc" }, { student: { name: "asc" } }],
     });
 
-    // Aggregate by student
-    const studentMap = new Map<string, { name: string; grades: Record<string, { marks: number; maxMarks: number }> }>();
-    for (const g of grades) {
-      if (!studentMap.has(g.studentId)) studentMap.set(g.studentId, { name: g.student.name, grades: {} });
-      studentMap.get(g.studentId)!.grades[g.examType] = { marks: g.marks, maxMarks: g.maxMarks };
+    const studentMap = new Map<
+      string,
+      { name: string; grades: Record<string, { marks: number; maxMarks: number }> }
+    >();
+
+    for (const grade of grades) {
+      if (!studentMap.has(grade.studentId)) {
+        studentMap.set(grade.studentId, { name: grade.student.name, grades: {} });
+      }
+
+      studentMap.get(grade.studentId)!.grades[grade.examType] = {
+        marks: grade.marks,
+        maxMarks: grade.maxMarks,
+      };
     }
 
-    res.json({ success: true, data: Array.from(studentMap.entries()).map(([id, v]) => ({ studentId: id, ...v })) });
-  } catch (err) {
-    next(err);
+    res.json({
+      success: true,
+      data: Array.from(studentMap.entries()).map(([studentId, value]) => ({
+        studentId,
+        ...value,
+      })),
+    });
+  } catch (error) {
+    next(error);
   }
 });
 

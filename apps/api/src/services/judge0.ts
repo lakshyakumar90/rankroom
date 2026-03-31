@@ -1,7 +1,9 @@
 import { SUPPORTED_LANGUAGES } from "@repo/types";
 
-const JUDGE0_URL = process.env["JUDGE0_API_URL"] ?? "https://judge0-ce.p.rapidapi.com";
+const JUDGE0_URL = (process.env["JUDGE0_API_URL"] ?? "http://localhost:2358").replace(/\/+$/, "");
 const JUDGE0_KEY = process.env["JUDGE0_API_KEY"] ?? "";
+const isRapidApiHost = /rapidapi\.com/i.test(JUDGE0_URL);
+const JUDGE0_TIMEOUT_MS = parseInt(process.env["JUDGE0_TIMEOUT_MS"] ?? "15000", 10);
 
 interface Judge0Submission {
   source_code: string;
@@ -20,10 +22,36 @@ interface Judge0Result {
   memory?: number;
 }
 
-const headers = {
-  "Content-Type": "application/json",
-  ...(JUDGE0_KEY ? { "X-RapidAPI-Key": JUDGE0_KEY, "X-RapidAPI-Host": "judge0-ce.p.rapidapi.com" } : {}),
-};
+function createJudge0Headers(includeJsonContentType = false) {
+  return {
+    ...(includeJsonContentType ? { "Content-Type": "application/json" } : {}),
+    ...(JUDGE0_KEY && isRapidApiHost
+      ? {
+          "X-RapidAPI-Key": JUDGE0_KEY,
+          "X-RapidAPI-Host": "judge0-ce.p.rapidapi.com",
+        }
+      : {}),
+  };
+}
+
+async function judge0Fetch(path: string, init?: RequestInit) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), JUDGE0_TIMEOUT_MS);
+
+  try {
+    return await fetch(`${JUDGE0_URL}${path}`, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Unknown Judge0 error";
+    throw new Error(
+      `Judge0 is unavailable at ${JUDGE0_URL}. Make sure your local Docker Judge0 stack is running and reachable. ${detail}`
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 function getLanguageId(language: string): number {
   const lang = SUPPORTED_LANGUAGES.find((l) => l.id === language);
@@ -62,9 +90,9 @@ export async function submitToJudge0(params: {
     ...(params.expectedOutput ? { expected_output: Buffer.from(params.expectedOutput).toString("base64") } : {}),
   };
 
-  const res = await fetch(`${JUDGE0_URL}/submissions?base64_encoded=true&wait=false`, {
+  const res = await judge0Fetch("/submissions?base64_encoded=true&wait=false", {
     method: "POST",
-    headers,
+    headers: createJudge0Headers(true),
     body: JSON.stringify(body),
   });
 
@@ -84,9 +112,9 @@ export async function submitBatchToJudge0(submissions: { code: string; language:
     })),
   };
 
-  const res = await fetch(`${JUDGE0_URL}/submissions/batch?base64_encoded=true`, {
+  const res = await judge0Fetch("/submissions/batch?base64_encoded=true", {
     method: "POST",
-    headers,
+    headers: createJudge0Headers(true),
     body: JSON.stringify(body),
   });
 
@@ -98,7 +126,9 @@ export async function submitBatchToJudge0(submissions: { code: string; language:
 // Poll for result with retries
 export async function getJudge0Result(token: string, maxRetries = 10): Promise<Judge0Result> {
   for (let i = 0; i < maxRetries; i++) {
-    const res = await fetch(`${JUDGE0_URL}/submissions/${token}?base64_encoded=true`, { headers });
+    const res = await judge0Fetch(`/submissions/${token}?base64_encoded=true`, {
+      headers: createJudge0Headers(),
+    });
     if (!res.ok) throw new Error(`Judge0 poll failed: ${res.status}`);
 
     const data = await res.json() as Judge0Result;
@@ -115,10 +145,9 @@ export async function getJudge0Result(token: string, maxRetries = 10): Promise<J
 
 // Get multiple results
 export async function getBatchJudge0Results(tokens: string[]): Promise<Judge0Result[]> {
-  const res = await fetch(
-    `${JUDGE0_URL}/submissions/batch?tokens=${tokens.join(",")}&base64_encoded=true`,
-    { headers }
-  );
+  const res = await judge0Fetch(`/submissions/batch?tokens=${tokens.join(",")}&base64_encoded=true`, {
+    headers: createJudge0Headers(),
+  });
   if (!res.ok) throw new Error(`Judge0 batch poll failed: ${res.status}`);
   const data = await res.json() as { submissions: Judge0Result[] };
   return data.submissions;

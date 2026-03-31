@@ -5,9 +5,9 @@
     "module": "CommonJS",
     "moduleResolution": "Node",
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": ".",
     "noEmit": true
   },
-  "include": ["src"],
+  "include": ["src", "generated", "prisma/seed.ts"],
   "exclude": ["node_modules", "dist"]
 }

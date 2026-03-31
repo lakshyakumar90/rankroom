@@ -12,7 +12,7 @@ redis.on("error", (err) => {
 });
 
 redis.on("connect", () => {
-  console.log("[Redis] Connected");
+  console.info("[Redis] Connected");
 });
 
 // For BullMQ (requires separate connection)

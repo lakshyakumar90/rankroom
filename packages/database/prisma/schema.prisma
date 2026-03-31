@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client"
   output   = "../generated/prisma"
@@ -10,14 +7,659 @@ datasource db {
   provider = "postgresql"
 }
 
-// ─────────────────────────────────────────────
-// ENUMS
-// ─────────────────────────────────────────────
+model User {
+  id                        String                     @id @default(cuid())
+  supabaseId                String                     @unique
+  email                     String                     @unique
+  name                      String
+  role                      Role                       @default(STUDENT)
+  avatar                    String?
+  isVerified                Boolean                    @default(false)
+  githubUsername            String?
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
+  activityLogs              ActivityLog[]
+  assignmentAudience        AssignmentAudience[]
+  assignmentSubmissions     AssignmentSubmission[]
+  assignmentsCreated        Assignment[]               @relation("AssignmentCreator")
+  attendanceRecords         AttendanceRecord[]
+  attendanceTaken           AttendanceSession[]        @relation("AttendanceTaker")
+  competitionRegistrations  CompetitionRegistration[]  @relation("CompetitionParticipant")
+  competitionsCreated       Competition[]              @relation("CompetitionCreator")
+  contestAudience           ContestAudience[]
+  contestRegistrations      ContestRegistration[]
+  contestStandings          ContestStanding[]
+  contestsCreated           Contest[]                  @relation("ContestCreator")
+  departmentHeaded          Department?                @relation("DepartmentHead")
+  enrollments               Enrollment[]
+  gradesReceived            Grade[]                    @relation("StudentGrades")
+  gradesGiven               Grade[]                    @relation("TeacherGrades")
+  hackathonAudience         HackathonAudience[]
+  hackathonRegistrations    HackathonRegistration[]    @relation("HackathonParticipant")
+  hackathonTeamsLed         HackathonTeam[]            @relation("HackathonTeamLeader")
+  hackathonsCreated         Hackathon[]                @relation("HackathonCreator")
+  leaderboard               Leaderboard?
+  notifications             Notification[]
+  problemsCreated           Problem[]
+  profile                   Profile?
+  sectionLeaderboardEntries SectionLeaderboard[]       @relation("SectionLeaderboardStudent")
+  coordinatedSection        Section?                   @relation("SectionCC")
+  legacyTeachingSections    Section[]                  @relation("SectionLegacyTeacher")
+  studentProfile            StudentProfile?
+  submissions               Submission[]
+  teachingAssignments       TeacherSubjectAssignment[] @relation("TeacherAssignments")
+
+  @@map("users")
+}
+
+model Profile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  bio         String?
+  skills      String[]
+  socialLinks Json?
+  college     String?
+  batch       String?
+  department  String?
+  totalPoints Int      @default(0)
+  rank        Int?
+  streak      Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  handle      String?  @unique
+  isPublic    Boolean  @default(false)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("profiles")
+}
+
+model StudentProfile {
+  id                     String        @id @default(cuid())
+  userId                 String        @unique
+  leetcodeUsername       String?
+  githubUsername         String?
+  codechefUsername       String?
+  codeforcesUsername     String?
+  hackerrankUsername     String?
+  leetcodeSolved         Int           @default(0)
+  leetcodeEasy           Int           @default(0)
+  leetcodeMedium         Int           @default(0)
+  leetcodeHard           Int           @default(0)
+  leetcodeAcceptanceRate Float?
+  githubContributions    Int           @default(0)
+  githubTopLanguages     Json          @default("[]")
+  codechefRating         Int?
+  codechefMaxRating      Int?
+  codechefStars          Int?
+  codeforcesRating       Int?
+  codeforcesMaxRating    Int?
+  codeforcesRank         String?
+  cgpa                   Float?
+  activityHeatmap        Json          @default("{}")
+  lastSyncedAt           DateTime?
+  bio                    String?
+  resumeUrl              String?
+  resumeFilename         String?
+  isPublic               Boolean       @default(true)
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+  achievements           Achievement[]
+  projects               Project[]
+  skills                 Skill[]
+  user                   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("student_profiles")
+}
+
+model Skill {
+  id        String         @id @default(cuid())
+  name      String
+  category  String
+  level     SkillLevel     @default(BEGINNER)
+  profileId String
+  profile   StudentProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([name, profileId])
+  @@map("skills")
+}
+
+model Project {
+  id          String         @id @default(cuid())
+  title       String
+  description String
+  techStack   String[]
+  githubUrl   String?
+  liveUrl     String?
+  imageUrl    String?
+  featured    Boolean        @default(false)
+  profileId   String
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  profile     StudentProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@map("projects")
+}
+
+model Achievement {
+  id             String         @id @default(cuid())
+  title          String
+  description    String?
+  date           DateTime
+  category       String
+  certificateUrl String?
+  profileId      String
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  profile        StudentProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@map("achievements")
+}
+
+model Department {
+  id                    String         @id @default(cuid())
+  name                  String
+  code                  String         @unique
+  headId                String?        @unique
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  description           String?
+  competitions          Competition[]
+  head                  User?          @relation("DepartmentHead", fields: [headId], references: [id])
+  hackathons            Hackathon[]
+  targetedNotifications Notification[] @relation("NotificationTargetDepartment")
+  sections              Section[]
+  subjects              Subject[]
+
+  @@map("departments")
+}
+
+model Section {
+  id                    String                     @id @default(cuid())
+  name                  String
+  legacyYear            Int?                       @map("year")
+  semester              Int
+  departmentId          String
+  legacyTeacherId       String?                    @map("teacherId")
+  createdAt             DateTime                   @default(now())
+  updatedAt             DateTime                   @updatedAt
+  code                  String
+  academicYear          String
+  coordinatorId         String?                    @unique
+  attendanceSessions    AttendanceSession[]
+  competitions          Competition[]
+  contests              Contest[]
+  enrollments           Enrollment[]
+  targetedNotifications Notification[]             @relation("NotificationTargetSection")
+  leaderboardEntries    SectionLeaderboard[]
+  coordinator           User?                      @relation("SectionCC", fields: [coordinatorId], references: [id])
+  department            Department                 @relation(fields: [departmentId], references: [id])
+  legacyTeacher         User?                      @relation("SectionLegacyTeacher", fields: [legacyTeacherId], references: [id])
+  subjects              Subject[]
+  teacherAssignments    TeacherSubjectAssignment[]
+
+  @@unique([code, departmentId, academicYear])
+  @@map("sections")
+}
+
+model Enrollment {
+  id         String   @id @default(cuid())
+  studentId  String
+  sectionId  String
+  enrolledAt DateTime @default(now())
+  section    Section  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  student    User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, sectionId])
+  @@map("enrollments")
+}
+
+model Subject {
+  id                 String                     @id @default(cuid())
+  name               String
+  code               String
+  sectionId          String
+  departmentId       String
+  teacherId          String?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  assignments        Assignment[]
+  attendanceSessions AttendanceSession[]
+  grades             Grade[]
+  department         Department                 @relation(fields: [departmentId], references: [id])
+  section            Section                    @relation(fields: [sectionId], references: [id])
+  teacherAssignments TeacherSubjectAssignment[]
+
+  @@unique([code, sectionId])
+  @@map("subjects")
+}
+
+model TeacherSubjectAssignment {
+  id        String   @id @default(cuid())
+  teacherId String
+  subjectId String
+  sectionId String
+  createdAt DateTime @default(now())
+  section   Section  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  subject   Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  teacher   User     @relation("TeacherAssignments", fields: [teacherId], references: [id])
+
+  @@unique([teacherId, subjectId, sectionId])
+  @@map("teacher_subject_assignments")
+}
+
+model AttendanceSession {
+  id        String             @id @default(cuid())
+  date      DateTime           @db.Date
+  sectionId String
+  subjectId String
+  takenById String
+  createdAt DateTime           @default(now())
+  topic     String?
+  records   AttendanceRecord[]
+  section   Section            @relation(fields: [sectionId], references: [id])
+  subject   Subject            @relation(fields: [subjectId], references: [id])
+  takenBy   User               @relation("AttendanceTaker", fields: [takenById], references: [id])
+
+  @@unique([sectionId, subjectId, date])
+  @@map("attendance_sessions")
+}
+
+model AttendanceRecord {
+  id                  String            @id @default(cuid())
+  attendanceSessionId String
+  studentId           String
+  status              AttendanceStatus  @default(PRESENT)
+  attendanceSession   AttendanceSession @relation(fields: [attendanceSessionId], references: [id], onDelete: Cascade)
+  student             User              @relation(fields: [studentId], references: [id])
+
+  @@unique([attendanceSessionId, studentId])
+  @@map("attendance_records")
+}
+
+model Grade {
+  id        String   @id @default(cuid())
+  studentId String
+  subjectId String
+  teacherId String
+  examType  ExamType
+  marks     Float
+  maxMarks  Float
+  semester  Int
+  remarks   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  student   User     @relation("StudentGrades", fields: [studentId], references: [id])
+  subject   Subject  @relation(fields: [subjectId], references: [id])
+  teacher   User     @relation("TeacherGrades", fields: [teacherId], references: [id])
+
+  @@map("grades")
+}
+
+model Assignment {
+  id            String                 @id @default(cuid())
+  title         String
+  description   String
+  subjectId     String
+  teacherId     String
+  dueDate       DateTime
+  maxScore      Float
+  attachmentUrl String?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  audience      AssignmentAudience[]
+  submissions   AssignmentSubmission[]
+  subject       Subject                @relation(fields: [subjectId], references: [id])
+  teacher       User                   @relation("AssignmentCreator", fields: [teacherId], references: [id])
+
+  @@map("assignments")
+}
+
+model AssignmentAudience {
+  assignmentId String
+  studentId    String
+  createdAt    DateTime   @default(now())
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student      User       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([assignmentId, studentId])
+  @@map("assignment_audience")
+}
+
+model AssignmentSubmission {
+  id           String                     @id @default(cuid())
+  assignmentId String
+  studentId    String
+  submittedAt  DateTime?
+  fileUrl      String?
+  score        Float?
+  feedback     String?
+  status       AssignmentSubmissionStatus @default(PENDING)
+  createdAt    DateTime                   @default(now())
+  updatedAt    DateTime                   @updatedAt
+  assignment   Assignment                 @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student      User                       @relation(fields: [studentId], references: [id])
+
+  @@unique([assignmentId, studentId])
+  @@map("assignment_submissions")
+}
+
+model Problem {
+  id           String           @id @default(cuid())
+  title        String
+  slug         String           @unique
+  description  String
+  difficulty   Difficulty
+  tags         String[]
+  constraints  String?
+  inputFormat  String?
+  outputFormat String?
+  sampleInput  String?
+  sampleOutput String?
+  createdById  String
+  isPublished  Boolean          @default(false)
+  points       Int
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  contests     ContestProblem[]
+  createdBy    User             @relation(fields: [createdById], references: [id])
+  submissions  Submission[]
+  testCases    TestCase[]
+
+  @@map("problems")
+}
+
+model TestCase {
+  id             String   @id @default(cuid())
+  problemId      String
+  input          String
+  expectedOutput String
+  isSample       Boolean  @default(false)
+  isHidden       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  problem        Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
+
+  @@map("test_cases")
+}
+
+model Submission {
+  id        String           @id @default(cuid())
+  userId    String
+  problemId String
+  contestId String?
+  code      String
+  language  String
+  status    SubmissionStatus @default(PENDING)
+  runtime   Int?
+  memory    Int?
+  verdict   Json?
+  createdAt DateTime         @default(now())
+  contest   Contest?         @relation(fields: [contestId], references: [id])
+  problem   Problem          @relation(fields: [problemId], references: [id])
+  user      User             @relation(fields: [userId], references: [id])
+
+  @@map("submissions")
+}
+
+model Contest {
+  id            String                @id @default(cuid())
+  title         String
+  description   String
+  startTime     DateTime
+  endTime       DateTime
+  type          ContestType           @default(PUBLIC)
+  status        ContestStatus         @default(UPCOMING)
+  createdById   String
+  rules         String?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  sectionId     String?
+  audience      ContestAudience[]
+  problems      ContestProblem[]
+  registrations ContestRegistration[]
+  standings     ContestStanding[]
+  createdBy     User                  @relation("ContestCreator", fields: [createdById], references: [id])
+  section       Section?              @relation(fields: [sectionId], references: [id])
+  submissions   Submission[]
+
+  @@map("contests")
+}
+
+model ContestProblem {
+  contestId String
+  problemId String
+  order     Int     @default(0)
+  points    Int     @default(100)
+  contest   Contest @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  problem   Problem @relation(fields: [problemId], references: [id])
+
+  @@id([contestId, problemId])
+  @@map("contest_problems")
+}
+
+model ContestRegistration {
+  contestId    String
+  userId       String
+  registeredAt DateTime @default(now())
+  contest      Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id])
+
+  @@id([contestId, userId])
+  @@map("contest_registrations")
+}
+
+model ContestAudience {
+  contestId String
+  studentId String
+  createdAt DateTime @default(now())
+  contest   Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  student   User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([contestId, studentId])
+  @@map("contest_audience")
+}
+
+model ContestStanding {
+  id             String    @id @default(cuid())
+  contestId      String
+  userId         String
+  totalScore     Int       @default(0)
+  penalty        Int       @default(0)
+  rank           Int?
+  solvedCount    Int       @default(0)
+  lastSubmitTime DateTime?
+  updatedAt      DateTime  @updatedAt
+  contest        Contest   @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  user           User      @relation(fields: [userId], references: [id])
+
+  @@unique([contestId, userId])
+  @@map("contest_standings")
+}
+
+model Leaderboard {
+  id                   String   @id @default(cuid())
+  userId               String   @unique
+  totalPoints          Int      @default(0)
+  problemsSolved       Int      @default(0)
+  easySolved           Int      @default(0)
+  mediumSolved         Int      @default(0)
+  hardSolved           Int      @default(0)
+  contestsParticipated Int      @default(0)
+  rank                 Int?
+  weeklyRank           Int?
+  monthlyRank          Int?
+  updatedAt            DateTime @updatedAt
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("leaderboard")
+}
+
+model Hackathon {
+  id                   String                  @id @default(cuid())
+  title                String
+  description          String
+  departmentId         String?
+  createdById          String
+  minSkills            String[]
+  minProjects          Int                     @default(0)
+  minLeetcode          Int                     @default(0)
+  minCgpa              Float?
+  startDate            DateTime
+  endDate              DateTime
+  registrationDeadline DateTime
+  maxTeamSize          Int                     @default(4)
+  minTeamSize          Int                     @default(1)
+  prizeDetails         String?
+  status               HackathonStatus         @default(UPCOMING)
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+  audience             HackathonAudience[]
+  registrations        HackathonRegistration[]
+  teams                HackathonTeam[]
+  createdBy            User                    @relation("HackathonCreator", fields: [createdById], references: [id])
+  department           Department?             @relation(fields: [departmentId], references: [id])
+
+  @@map("hackathons")
+}
+
+model HackathonAudience {
+  hackathonId String
+  studentId   String
+  createdAt   DateTime  @default(now())
+  hackathon   Hackathon @relation(fields: [hackathonId], references: [id], onDelete: Cascade)
+  student     User      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([hackathonId, studentId])
+  @@map("hackathon_audience")
+}
+
+model HackathonTeam {
+  id            String                  @id @default(cuid())
+  name          String
+  teamCode      String                  @unique
+  hackathonId   String
+  leaderId      String
+  submissionUrl String?
+  rank          Int?
+  createdAt     DateTime                @default(now())
+  members       HackathonRegistration[]
+  hackathon     Hackathon               @relation(fields: [hackathonId], references: [id], onDelete: Cascade)
+  leader        User                    @relation("HackathonTeamLeader", fields: [leaderId], references: [id])
+
+  @@map("hackathon_teams")
+}
+
+model HackathonRegistration {
+  id              String         @id @default(cuid())
+  hackathonId     String
+  studentId       String
+  teamId          String?
+  isEligible      Boolean        @default(false)
+  eligibilityNote String?
+  registeredAt    DateTime       @default(now())
+  hackathon       Hackathon      @relation(fields: [hackathonId], references: [id], onDelete: Cascade)
+  student         User           @relation("HackathonParticipant", fields: [studentId], references: [id])
+  team            HackathonTeam? @relation(fields: [teamId], references: [id])
+
+  @@unique([hackathonId, studentId])
+  @@map("hackathon_registrations")
+}
+
+model Competition {
+  id            String                    @id @default(cuid())
+  title         String
+  description   String
+  departmentId  String?
+  sectionId     String?
+  createdById   String
+  type          CompetitionType
+  minSkills     String[]
+  minProjects   Int                       @default(0)
+  startDate     DateTime
+  endDate       DateTime
+  status        HackathonStatus           @default(UPCOMING)
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+  registrations CompetitionRegistration[]
+  createdBy     User                      @relation("CompetitionCreator", fields: [createdById], references: [id])
+  department    Department?               @relation(fields: [departmentId], references: [id])
+  section       Section?                  @relation(fields: [sectionId], references: [id])
+
+  @@map("competitions")
+}
+
+model CompetitionRegistration {
+  id            String      @id @default(cuid())
+  competitionId String
+  studentId     String
+  isEligible    Boolean     @default(false)
+  registeredAt  DateTime    @default(now())
+  competition   Competition @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  student       User        @relation("CompetitionParticipant", fields: [studentId], references: [id])
+
+  @@unique([competitionId, studentId])
+  @@map("competition_registrations")
+}
+
+model SectionLeaderboard {
+  id              String   @id @default(cuid())
+  sectionId       String
+  studentId       String
+  cgpaScore       Float    @default(0)
+  codingScore     Float    @default(0)
+  assignmentScore Float    @default(0)
+  hackathonScore  Float    @default(0)
+  profileScore    Float    @default(0)
+  externalScore   Float    @default(0)
+  totalScore      Float    @default(0)
+  rank            Int?
+  lastComputedAt  DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  section         Section  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  student         User     @relation("SectionLeaderboardStudent", fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([sectionId, studentId])
+  @@map("section_leaderboard")
+}
+
+model Notification {
+  id                 String           @id @default(cuid())
+  userId             String
+  type               NotificationType
+  title              String
+  message            String
+  isRead             Boolean          @default(false)
+  link               String?
+  createdAt          DateTime         @default(now())
+  entityId           String?
+  entityType         String?
+  targetDepartmentId String?
+  targetRole         Role?
+  targetSectionId    String?
+  targetDepartment   Department?      @relation("NotificationTargetDepartment", fields: [targetDepartmentId], references: [id])
+  targetSection      Section?         @relation("NotificationTargetSection", fields: [targetSectionId], references: [id])
+  user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("activity_logs")
+}
 
 enum Role {
   ADMIN
   TEACHER
   STUDENT
+  DEPARTMENT_HEAD
+  CLASS_COORDINATOR
+  SUPER_ADMIN
 }
 
 enum AttendanceStatus {
@@ -68,6 +710,30 @@ enum ContestStatus {
   ENDED
 }
 
+enum SkillLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+enum HackathonStatus {
+  DRAFT
+  UPCOMING
+  REGISTRATION_OPEN
+  ONGOING
+  COMPLETED
+  CANCELLED
+}
+
+enum CompetitionType {
+  CODING
+  DESIGN
+  PRESENTATION
+  QUIZ
+  OTHER
+}
+
 enum NotificationType {
   ASSIGNMENT_POSTED
   GRADE_PUBLISHED
@@ -75,399 +741,16 @@ enum NotificationType {
   SUBMISSION_JUDGED
   ENROLLMENT_ADDED
   GENERAL
-}
-
-// ─────────────────────────────────────────────
-// CORE
-// ─────────────────────────────────────────────
-
-model User {
-  id           String   @id @default(cuid())
-  supabaseId   String   @unique
-  email        String   @unique
-  name         String
-  role         Role     @default(STUDENT)
-  avatar       String?
-  isVerified   Boolean  @default(false)
-  githubUsername String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  // Relations
-  profile            Profile?
-  departmentHeaded   Department?         @relation("DeptHead")
-  teachingClasses    Batch[]             @relation("TeacherBatches")
-  enrollments        Enrollment[]
-  attendanceMarked   Attendance[]        @relation("MarkedBy")
-  attendanceRecords  AttendanceRecord[]
-  gradesReceived     Grade[]             @relation("StudentGrades")
-  gradesGiven        Grade[]             @relation("TeacherGrades")
-  assignmentsCreated Assignment[]        @relation("AssignmentCreator")
-  assignmentSubmissions AssignmentSubmission[]
-  problemsCreated    Problem[]
-  submissions        Submission[]
-  contestsCreated    Contest[]
-  contestRegistrations ContestRegistration[]
-  contestStandings   ContestStanding[]
-  leaderboard        Leaderboard?
-  notifications      Notification[]
-  activityLogs       ActivityLog[]
-
-  @@map("users")
-}
-
-model Profile {
-  id          String   @id @default(cuid())
-  userId      String   @unique
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  bio         String?
-  skills      String[]
-  socialLinks Json?
-  college     String?
-  batch       String?
-  department  String?
-  totalPoints Int      @default(0)
-  rank        Int?
-  streak      Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@map("profiles")
-}
-
-model Department {
-  id        String   @id @default(cuid())
-  name      String
-  code      String   @unique
-  headId    String?  @unique
-  head      User?    @relation("DeptHead", fields: [headId], references: [id])
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  batches  Batch[]
-  subjects Subject[]
-
-  @@map("departments")
-}
-
-model Batch {
-  id           String   @id @default(cuid())
-  name         String
-  year         Int
-  semester     Int
-  departmentId String
-  department   Department @relation(fields: [departmentId], references: [id])
-  teacherId    String
-  teacher      User       @relation("TeacherBatches", fields: [teacherId], references: [id])
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-
-  // Relations
-  enrollments Enrollment[]
-  subjects    Subject[]
-  attendance  Attendance[]
-
-  @@map("batches")
-}
-
-model Enrollment {
-  id         String   @id @default(cuid())
-  studentId  String
-  student    User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  batchId    String
-  batch      Batch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  enrolledAt DateTime @default(now())
-
-  @@unique([studentId, batchId])
-  @@map("enrollments")
-}
-
-// ─────────────────────────────────────────────
-// ACADEMIC
-// ─────────────────────────────────────────────
-
-model Subject {
-  id           String     @id @default(cuid())
-  name         String
-  code         String
-  batchId      String
-  batch        Batch      @relation(fields: [batchId], references: [id])
-  departmentId String
-  department   Department @relation(fields: [departmentId], references: [id])
-  teacherId    String
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-
-  // Relations
-  grades      Grade[]
-  assignments Assignment[]
-  attendance  Attendance[]
-
-  @@unique([code, batchId])
-  @@map("subjects")
-}
-
-model Attendance {
-  id        String   @id @default(cuid())
-  date      DateTime @db.Date
-  batchId   String
-  batch     Batch    @relation(fields: [batchId], references: [id])
-  subjectId String
-  subject   Subject  @relation(fields: [subjectId], references: [id])
-  teacherId String
-  teacher   User     @relation("MarkedBy", fields: [teacherId], references: [id])
-  createdAt DateTime @default(now())
-
-  records AttendanceRecord[]
-
-  @@unique([date, batchId, subjectId])
-  @@map("attendance")
-}
-
-model AttendanceRecord {
-  id           String           @id @default(cuid())
-  attendanceId String
-  attendance   Attendance       @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
-  studentId    String
-  student      User             @relation(fields: [studentId], references: [id])
-  status       AttendanceStatus @default(PRESENT)
-
-  @@unique([attendanceId, studentId])
-  @@map("attendance_records")
-}
-
-model Grade {
-  id        String   @id @default(cuid())
-  studentId String
-  student   User     @relation("StudentGrades", fields: [studentId], references: [id])
-  subjectId String
-  subject   Subject  @relation(fields: [subjectId], references: [id])
-  teacherId String
-  teacher   User     @relation("TeacherGrades", fields: [teacherId], references: [id])
-  examType  ExamType
-  marks     Float
-  maxMarks  Float
-  semester  Int
-  remarks   String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("grades")
-}
-
-model Assignment {
-  id            String   @id @default(cuid())
-  title         String
-  description   String
-  subjectId     String
-  subject       Subject  @relation(fields: [subjectId], references: [id])
-  teacherId     String
-  teacher       User     @relation("AssignmentCreator", fields: [teacherId], references: [id])
-  dueDate       DateTime
-  maxScore      Float
-  attachmentUrl String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  submissions AssignmentSubmission[]
-
-  @@map("assignments")
-}
-
-model AssignmentSubmission {
-  id           String                     @id @default(cuid())
-  assignmentId String
-  assignment   Assignment                 @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  studentId    String
-  student      User                       @relation(fields: [studentId], references: [id])
-  submittedAt  DateTime?
-  fileUrl      String?
-  score        Float?
-  feedback     String?
-  status       AssignmentSubmissionStatus @default(PENDING)
-  createdAt    DateTime                   @default(now())
-  updatedAt    DateTime                   @updatedAt
-
-  @@unique([assignmentId, studentId])
-  @@map("assignment_submissions")
-}
-
-// ─────────────────────────────────────────────
-// CODING PLATFORM
-// ─────────────────────────────────────────────
-
-model Problem {
-  id            String     @id @default(cuid())
-  title         String
-  slug          String     @unique
-  description   String     @db.Text
-  difficulty    Difficulty
-  tags          String[]
-  constraints   String?
-  inputFormat   String?
-  outputFormat  String?
-  sampleInput   String?
-  sampleOutput  String?
-  createdById   String
-  createdBy     User       @relation(fields: [createdById], references: [id])
-  isPublished   Boolean    @default(false)
-  points        Int
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
-
-  testCases   TestCase[]
-  submissions Submission[]
-  contests    ContestProblem[]
-
-  @@map("problems")
-}
-
-model TestCase {
-  id             String   @id @default(cuid())
-  problemId      String
-  problem        Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
-  input          String   @db.Text
-  expectedOutput String   @db.Text
-  isSample       Boolean  @default(false)
-  isHidden       Boolean  @default(false)
-  createdAt      DateTime @default(now())
-
-  @@map("test_cases")
-}
-
-model Submission {
-  id        String           @id @default(cuid())
-  userId    String
-  user      User             @relation(fields: [userId], references: [id])
-  problemId String
-  problem   Problem          @relation(fields: [problemId], references: [id])
-  contestId String?
-  contest   Contest?         @relation(fields: [contestId], references: [id])
-  code      String           @db.Text
-  language  String
-  status    SubmissionStatus @default(PENDING)
-  runtime   Int?             // in ms
-  memory    Int?             // in KB
-  verdict   Json?            // detailed per-test-case results
-  createdAt DateTime         @default(now())
-
-  @@map("submissions")
-}
-
-// ─────────────────────────────────────────────
-// CONTESTS
-// ─────────────────────────────────────────────
-
-model Contest {
-  id          String        @id @default(cuid())
-  title       String
-  description String        @db.Text
-  startTime   DateTime
-  endTime     DateTime
-  type        ContestType   @default(PUBLIC)
-  status      ContestStatus @default(UPCOMING)
-  createdById String
-  createdBy   User          @relation(fields: [createdById], references: [id])
-  rules       String?       @db.Text
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-
-  problems      ContestProblem[]
-  registrations ContestRegistration[]
-  standings     ContestStanding[]
-  submissions   Submission[]
-
-  @@map("contests")
-}
-
-model ContestProblem {
-  contestId String
-  contest   Contest @relation(fields: [contestId], references: [id], onDelete: Cascade)
-  problemId String
-  problem   Problem @relation(fields: [problemId], references: [id])
-  order     Int     @default(0)
-  points    Int     @default(100)
-
-  @@id([contestId, problemId])
-  @@map("contest_problems")
-}
-
-model ContestRegistration {
-  contestId    String
-  contest      Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
-  userId       String
-  user         User     @relation(fields: [userId], references: [id])
-  registeredAt DateTime @default(now())
-
-  @@id([contestId, userId])
-  @@map("contest_registrations")
-}
-
-model ContestStanding {
-  id             String   @id @default(cuid())
-  contestId      String
-  contest        Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
-  userId         String
-  user           User     @relation(fields: [userId], references: [id])
-  totalScore     Int      @default(0)
-  penalty        Int      @default(0)
-  rank           Int?
-  solvedCount    Int      @default(0)
-  lastSubmitTime DateTime?
-  updatedAt      DateTime @updatedAt
-
-  @@unique([contestId, userId])
-  @@map("contest_standings")
-}
-
-// ─────────────────────────────────────────────
-// LEADERBOARD
-// ─────────────────────────────────────────────
-
-model Leaderboard {
-  id                    String   @id @default(cuid())
-  userId                String   @unique
-  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  totalPoints           Int      @default(0)
-  problemsSolved        Int      @default(0)
-  easySolved            Int      @default(0)
-  mediumSolved          Int      @default(0)
-  hardSolved            Int      @default(0)
-  contestsParticipated  Int      @default(0)
-  rank                  Int?
-  weeklyRank            Int?
-  monthlyRank           Int?
-  updatedAt             DateTime @updatedAt
-
-  @@map("leaderboard")
-}
-
-// ─────────────────────────────────────────────
-// NOTIFICATIONS & ACTIVITY
-// ─────────────────────────────────────────────
-
-model Notification {
-  id        String           @id @default(cuid())
-  userId    String
-  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      NotificationType
-  title     String
-  message   String
-  isRead    Boolean          @default(false)
-  link      String?
-  createdAt DateTime         @default(now())
-
-  @@map("notifications")
-}
-
-model ActivityLog {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  action    String
-  metadata  Json?
-  createdAt DateTime @default(now())
-
-  @@map("activity_logs")
+  ASSIGNMENT_GRADED
+  CONTEST_CREATED
+  CONTEST_STARTING_SOON
+  CONTEST_ENDED
+  HACKATHON_CREATED
+  HACKATHON_REGISTRATION_OPEN
+  HACKATHON_DEADLINE_APPROACHING
+  COMPETITION_CREATED
+  SUBMISSION_ACCEPTED
+  LEADERBOARD_UPDATED
+  ATTENDANCE_LOW
+  ANNOUNCEMENT
 }

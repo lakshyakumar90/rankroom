@@ -10,6 +10,9 @@ import { type ApiResponse, type ContestStanding } from "@repo/types";
 import { Trophy, Medal, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { useAuthStore } from "@/store/auth";
+import { useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { getSocket } from "@/lib/socket";
 
 export default function ContestStandingsPage({
   params,
@@ -18,14 +21,31 @@ export default function ContestStandingsPage({
 }) {
   const { id } = use(params);
   const { user } = useAuthStore();
+  const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
     queryKey: ["contest-standings", id],
     queryFn: () => api.get<ApiResponse<ContestStanding[]>>(`/api/contests/${id}/standings`),
-    refetchInterval: 30_000, // refresh every 30s while live
+    refetchInterval: 60_000,
   });
 
   const standings = data?.data ?? [];
+
+  useEffect(() => {
+    const socket = getSocket();
+    const handleUpdate = (payload: { contestId: string; standings: ContestStanding[] }) => {
+      if (payload.contestId !== id) return;
+      queryClient.setQueryData(["contest-standings", id], { success: true, data: payload.standings });
+    };
+
+    socket.emit("contest:join", { contestId: id });
+    socket.on("contest:standing_update", handleUpdate);
+
+    return () => {
+      socket.emit("contest:leave", { contestId: id });
+      socket.off("contest:standing_update", handleUpdate);
+    };
+  }, [id, queryClient]);
 
   const rankIcon = (rank: number) => {
     if (rank === 1)

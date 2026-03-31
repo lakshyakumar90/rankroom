@@ -3,7 +3,11 @@ import "dotenv/config";
 import http from "http";
 import { createApp } from "./app";
 import { initSocket } from "./lib/socket";
-import { startSubmissionWorker, startLeaderboardWorker } from "./workers/submissionWorker";
+import { startSubmissionWorker, startLeaderboardWorker } from "./jobs/submissionWorker";
+import { startPlatformSyncJob } from "./jobs/platformSync.job";
+import { startLeaderboardRecomputeJob } from "./jobs/leaderboardRecompute.job";
+import { startAttendanceAlertJob } from "./jobs/attendanceAlert.job";
+import { startEventReminderJob } from "./jobs/eventReminder.job";
 import { logger } from "./lib/logger";
 
 const PORT = parseInt(process.env.PORT ?? "4000", 10);
@@ -18,6 +22,12 @@ async function main() {
   // Start BullMQ workers
   startSubmissionWorker();
   startLeaderboardWorker();
+
+  // Start scheduled jobs
+  startPlatformSyncJob();
+  startLeaderboardRecomputeJob();
+  startAttendanceAlertJob();
+  startEventReminderJob();
 
   server.listen(PORT, () => {
     logger.info(`🚀 API server running on port ${PORT}`);

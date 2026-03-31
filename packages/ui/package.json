@@ -3,7 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "exports": {
-    "./*": "./src/*.tsx"
+    "./*": "./src/*.tsx",
+    "./charts/*": "./src/charts/*.tsx",
+    "./common/*": "./src/common/*.tsx",
+    "./editor/*": "./src/editor/*.tsx"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",
@@ -20,6 +23,11 @@
     "typescript": "5.9.2"
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@repo/types": "workspace:*",
+    "class-variance-authority": "^0.7.1",
+    "lucide-react": "^0.511.0",
+    "next": "16.1.5",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   }

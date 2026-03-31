@@ -1,4 +1,4 @@
-import express from "express";
+import express, { type Express } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import pinoHttp from "pino-http";
@@ -14,14 +14,19 @@ import attendanceRoutes from "./routes/attendance";
 import gradeRoutes from "./routes/grades";
 import assignmentRoutes from "./routes/assignments";
 import problemRoutes from "./routes/problems";
-import executeRoutes from "./routes/execute";
+import submissionRoutes from "./routes/submissions";
 import contestRoutes from "./routes/contests";
+import departmentRoutes from "./routes/departments";
+import sectionRoutes from "./routes/sections";
+import profileRoutes from "./routes/profile";
+import hackathonRoutes from "./routes/hackathons";
 import leaderboardRoutes from "./routes/leaderboard";
 import notificationRoutes from "./routes/notifications";
 import analyticsRoutes from "./routes/analytics";
 import subjectRoutes from "./routes/subjects";
+import searchRoutes from "./routes/search";
 
-export function createApp() {
+export function createApp(): Express {
   const app = express();
 
   // Security
@@ -51,7 +56,33 @@ export function createApp() {
   });
 
   // Logging
-  app.use(pinoHttp({ logger }));
+  app.use(
+    pinoHttp({
+      logger,
+      quietReqLogger: true,
+      autoLogging: {
+        ignore: (req) => req.url === "/health",
+      },
+      customLogLevel: (_req, res, err) => {
+        if (err || res.statusCode >= 500) return "error";
+        if (res.statusCode >= 400) return "warn";
+        return "silent";
+      },
+      serializers: {
+        req(req) {
+          return {
+            method: req.method,
+            url: req.url,
+          };
+        },
+        res(res) {
+          return {
+            statusCode: res.statusCode,
+          };
+        },
+      },
+    })
+  );
 
   // Body parsing
   app.use(express.json({ limit: "1mb" }));
@@ -66,16 +97,21 @@ export function createApp() {
   app.use("/api/auth", authRoutes);
   app.use("/api/users", userRoutes);
   app.use("/api/admin", adminRoutes);
+  app.use("/api/departments", departmentRoutes);
+  app.use("/api/sections", sectionRoutes);
   app.use("/api/attendance", attendanceRoutes);
   app.use("/api/grades", gradeRoutes);
   app.use("/api/assignments", assignmentRoutes);
-  app.use("/api/problems", problemRoutes);
-  app.use("/api/execute", executeLimiter, executeRoutes);
+  app.use("/api/problems", executeLimiter, problemRoutes);
+  app.use("/api/submissions", submissionRoutes);
   app.use("/api/contests", contestRoutes);
+  app.use("/api/profile", profileRoutes);
+  app.use("/api/hackathons", hackathonRoutes);
   app.use("/api/leaderboard", leaderboardRoutes);
   app.use("/api/notifications", notificationRoutes);
   app.use("/api/analytics", analyticsRoutes);
   app.use("/api/subjects", subjectRoutes);
+  app.use("/api/search", searchRoutes);
 
   // 404 handler
   app.use(notFound);
