@@ -12,7 +12,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { User, GraduationCap, Code2, ShieldAlert } from "lucide-react";
 
 export default function SettingsPage() {
   const { user, setUser } = useAuthStore();
@@ -115,85 +117,144 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto grid max-w-5xl gap-6 xl:grid-cols-[1.25fr,0.75fr]">
-      <Card>
-        <CardHeader>
-          <CardTitle>Personal Settings</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="flex items-center gap-4 border border-border p-4">
-            <Avatar src={user?.avatar} name={user?.name} size="lg" />
-            <div>
-              <p className="text-base font-semibold">{user?.name}</p>
-              <p className="text-sm text-muted-foreground">{user?.email}</p>
-              <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{user?.role?.replaceAll("_", " ")}</p>
-            </div>
-          </div>
+    <div className="mx-auto max-w-5xl p-6">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold tracking-tight">Account Settings</h1>
+        <p className="text-muted-foreground mt-1">Manage your profile, academic identity, and preferences.</p>
+      </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Full name" htmlFor="name">
-              <Input id="name" value={name} onChange={(event) => setName(event.target.value)} disabled={!canEditAcademicIdentity && isStudent} />
-            </Field>
-            <Field label="Public handle" htmlFor="handle">
-              <Input id="handle" value={handle} onChange={(event) => setHandle(event.target.value)} />
-            </Field>
-          </div>
+      <Tabs defaultValue="general" className="flex flex-col md:flex-row gap-8">
+        <TabsList className="flex md:flex-col h-auto justify-start self-start bg-transparent p-0 w-full md:w-56 gap-1 md:border-r border-border md:pr-6 pb-4 md:pb-0 overflow-x-auto">
+          <TabsTrigger value="general" className="justify-start data-[state=active]:bg-muted data-[state=active]:text-foreground text-muted-foreground px-4 py-2.5 w-full text-left gap-2 rounded-lg">
+            <User className="size-4" /> General Profile
+          </TabsTrigger>
+          <TabsTrigger value="academic" className="justify-start data-[state=active]:bg-muted data-[state=active]:text-foreground text-muted-foreground px-4 py-2.5 w-full text-left gap-2 rounded-lg">
+            <GraduationCap className="size-4" /> Academic Info
+          </TabsTrigger>
+          <TabsTrigger value="developer" className="justify-start data-[state=active]:bg-muted data-[state=active]:text-foreground text-muted-foreground px-4 py-2.5 w-full text-left gap-2 rounded-lg">
+            <Code2 className="size-4" /> Developer Data
+          </TabsTrigger>
+        </TabsList>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="GitHub username" htmlFor="github">
-              <Input id="github" value={githubUsername} onChange={(event) => setGithubUsername(event.target.value)} />
-            </Field>
-            <Field label="College / institute" htmlFor="college">
-              <Input id="college" value={college} onChange={(event) => setCollege(event.target.value)} />
-            </Field>
-          </div>
+        <div className="flex-1 space-y-6">
+          {/* General Tab */}
+          <TabsContent value="general" className="mt-0 space-y-6 animate-in fade-in-50">
+            <Card className="border-border/50 shadow-sm">
+              <CardHeader>
+                <CardTitle>Public Profile</CardTitle>
+                <CardDescription>This is how others will see you on the platform.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="flex items-center gap-5 rounded-xl border border-border/50 bg-muted/20 p-5">
+                  <Avatar src={user?.avatar} name={user?.name} size="lg" className="size-16" />
+                  <div>
+                    <p className="text-lg font-semibold">{user?.name}</p>
+                    <p className="text-sm text-muted-foreground">{user?.email}</p>
+                    <div className="mt-2 text-xs uppercase tracking-widest text-primary font-semibold">{user?.role?.replaceAll("_", " ")}</div>
+                  </div>
+                </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Batch / session" htmlFor="batch">
-              <Input id="batch" value={batch} onChange={(event) => setBatch(event.target.value)} disabled={!canEditAcademicIdentity} />
-            </Field>
-            <Field label="Department label" htmlFor="department">
-              <Input id="department" value={department} onChange={(event) => setDepartment(event.target.value)} disabled={!canEditAcademicIdentity} />
-            </Field>
-          </div>
+                <div className="grid gap-5 md:grid-cols-2">
+                  <Field label="Full name" htmlFor="name">
+                    <Input id="name" value={name} onChange={(event) => setName(event.target.value)} disabled={!canEditAcademicIdentity && isStudent} />
+                  </Field>
+                  <Field label="Public handle" htmlFor="handle">
+                    <Input id="handle" value={handle} onChange={(event) => setHandle(event.target.value)} placeholder="@username" />
+                  </Field>
+                </div>
 
-          <Field label="Bio" htmlFor="bio">
-            <Textarea id="bio" value={bio} onChange={(event) => setBio(event.target.value)} />
-          </Field>
+                <Field label="Bio" htmlFor="bio">
+                  <Textarea id="bio" value={bio} onChange={(event) => setBio(event.target.value)} placeholder="A short description about yourself" className="resize-none" rows={4} />
+                </Field>
 
-          <div className="flex items-center justify-between border border-border p-4">
-            <div>
-              <p className="text-sm font-semibold">Public profile</p>
-              <p className="text-sm text-muted-foreground">Choose whether your profile is visible to others.</p>
-            </div>
-            <Switch checked={isPublic} onCheckedChange={setIsPublic} aria-label="Toggle public profile" />
-          </div>
+                <div className="flex items-center justify-between rounded-xl border border-border/50 bg-muted/10 p-5">
+                  <div className="space-y-0.5">
+                    <Label className="text-base">Public Visibility</Label>
+                    <p className="text-sm text-muted-foreground">Make your profile accessible to anyone via your handle.</p>
+                  </div>
+                  <Switch checked={isPublic} onCheckedChange={setIsPublic} aria-label="Toggle public profile" />
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-          <div className="flex justify-end">
-            <Button onClick={handleSave} disabled={loading}>
-              {loading ? <Loader2 className="size-4 animate-spin" /> : null}
-              Save changes
+          {/* Academic Tab */}
+          <TabsContent value="academic" className="mt-0 space-y-6 animate-in fade-in-50">
+            <Card className="border-border/50 shadow-sm">
+              <CardHeader>
+                <CardTitle>Academic Enrollment</CardTitle>
+                <CardDescription>Your registered academic details.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-2">
+                  {academicFields.map((field) => (
+                    <div key={field.label} className="rounded-xl border border-border/50 bg-muted/20 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{field.label}</p>
+                      <p className="mt-1.5 font-medium">{field.value}</p>
+                    </div>
+                  ))}
+                </div>
+                {isStudent && (
+                  <div className="flex items-start gap-3 rounded-xl border border-blue-500/20 bg-blue-500/10 p-4 text-blue-600 dark:text-blue-400">
+                    <ShieldAlert className="mt-0.5 size-4 shrink-0" />
+                    <p className="text-sm leading-relaxed">
+                      Core academic fields are managed by administrators. Please contact your coordinator to update section or department mappings.
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border-border/50 shadow-sm">
+              <CardHeader>
+                <CardTitle>Academic Descriptors</CardTitle>
+                <CardDescription>Additional context for your institution.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <Field label="College / Institute" htmlFor="college">
+                  <Input id="college" value={college} onChange={(event) => setCollege(event.target.value)} />
+                </Field>
+                <div className="grid gap-5 md:grid-cols-2">
+                  <Field label="Batch / Session" htmlFor="batch">
+                    <Input id="batch" value={batch} onChange={(event) => setBatch(event.target.value)} disabled={!canEditAcademicIdentity} />
+                  </Field>
+                  <Field label="Department Alias" htmlFor="department">
+                    <Input id="department" value={department} onChange={(event) => setDepartment(event.target.value)} disabled={!canEditAcademicIdentity} />
+                  </Field>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Developer Tab */}
+          <TabsContent value="developer" className="mt-0 space-y-6 animate-in fade-in-50">
+            <Card className="border-border/50 shadow-sm">
+              <CardHeader>
+                <CardTitle>Developer Integrations</CardTitle>
+                <CardDescription>Connect external platforms to showcase your experience.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <Field label="GitHub Username" htmlFor="github">
+                  <div className="flex">
+                    <span className="inline-flex items-center rounded-l-md border border-r-0 border-border bg-muted/50 px-3 text-sm text-muted-foreground">github.com/</span>
+                    <Input id="github" value={githubUsername} onChange={(event) => setGithubUsername(event.target.value)} className="rounded-l-none" />
+                  </div>
+                </Field>
+                <p className="text-xs text-muted-foreground p-3 rounded-lg bg-muted/30 border border-border/50">
+                  Linking your GitHub account enables activity syncing with the platform heatmap.
+                </p>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <div className="flex justify-end pt-4">
+            <Button onClick={handleSave} disabled={loading} className="px-8 font-medium">
+              {loading && <Loader2 className="mr-2 size-4 animate-spin" />}
+              Save Changes
             </Button>
           </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Student Info</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            Academic identity fields are managed by teachers or academic admins. Students can review them here.
-          </p>
-          {academicFields.map((field) => (
-            <div key={field.label} className="border border-border p-3">
-              <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{field.label}</p>
-              <p className="mt-1 text-sm font-medium">{field.value}</p>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
+        </div>
+      </Tabs>
     </div>
   );
 }

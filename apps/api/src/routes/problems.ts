@@ -390,6 +390,99 @@ router.get("/:id/test-cases", authenticate, requireRole(Role.ADMIN, Role.TEACHER
   }
 });
 
+// POST /api/problems/:id/ai-hint - AI analysis via OpenRouter
+router.post("/:id/ai-hint", authenticate, async (req, res, next) => {
+  try {
+    const { code, language, problemTitle, problemDescription } = req.body as {
+      code: string;
+      language: string;
+      problemTitle: string;
+      problemDescription: string;
+    };
+
+    if (!code || !language) {
+      throw new AppError("code and language are required", 400);
+    }
+
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) {
+      throw new AppError("AI service not configured", 503);
+    }
+
+    const systemPrompt = `You are an expert competitive programmer and coding interview coach.
+Analyze the user's code for a programming problem and provide:
+1. **Optimal Approach**: Suggest the best algorithm/data structure for this problem
+2. **Time Complexity**: Big-O time complexity of the optimal solution
+3. **Space Complexity**: Big-O space complexity of the optimal solution
+4. **Dry Run**: Step-by-step trace with a small example showing how the optimal solution works
+5. **Explanation**: Clear explanation of why this approach is optimal
+
+Format your response as valid JSON matching this schema:
+{
+  "optimalApproach": "description of optimal approach",
+  "timeComplexity": "O(...)",
+  "spaceComplexity": "O(...)",
+  "dryRun": "step by step dry run with example",
+  "explanation": "detailed explanation",
+  "issues": "any issues found in the submitted code (optional)"
+}`;
+
+    const userPrompt = `Problem: ${problemTitle}
+Description: ${problemDescription.slice(0, 500)}
+
+User's ${language} code:
+\`\`\`${language}
+${code.slice(0, 2000)}
+\`\`\`
+
+Analyze this and provide the optimal solution details in JSON format.`;
+
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://rankroom.app",
+        "X-Title": "RankRoom AI Assistant",
+      },
+      body: JSON.stringify({
+        model: process.env.OPENROUTER_MODEL ?? "google/gemini-flash-1.5",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.3,
+        max_tokens: 1500,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("OpenRouter error:", errorText);
+      throw new AppError("AI service error", 502);
+    }
+
+    const aiResponse = await response.json() as {
+      choices: Array<{ message: { content: string } }>;
+    };
+
+    const content = aiResponse.choices?.[0]?.message?.content;
+    if (!content) throw new AppError("Empty AI response", 502);
+
+    let parsed: Record<string, string>;
+    try {
+      parsed = JSON.parse(content) as Record<string, string>;
+    } catch {
+      parsed = { explanation: content, optimalApproach: "", timeComplexity: "Unknown", spaceComplexity: "Unknown", dryRun: "" };
+    }
+
+    res.json({ success: true, data: parsed });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/problems/:id/submissions - own submissions for this problem
 router.get("/:id/submissions", authenticate, async (req, res, next) => {
   try {

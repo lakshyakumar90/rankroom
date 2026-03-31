@@ -59,3 +59,12 @@ export async function recomputeLeaderboardController(req: Request, res: Response
     next(error);
   }
 }
+
+export async function insightsController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const data = await leaderboardService.getLeaderboardInsights(req.params.sectionId);
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+}

@@ -73,7 +73,7 @@ export async function recomputeSectionLeaderboard(sectionId: string) {
   const totalProblems = await prisma.problem.count({ where: { isPublished: true } });
   const totalAssignments = await prisma.assignment.count({ where: { subjectId: { in: subjectIds } } });
 
-  const [contestWins, gradeAverages, submissions, hackathonStats] = await Promise.all([
+  const [contestWins, gradeAverages, submissions, hackathonStats, attendanceData, contestParticipation] = await Promise.all([
     prisma.contestStanding.groupBy({
       by: ["userId"],
       where: {
@@ -101,6 +101,22 @@ export async function recomputeSectionLeaderboard(sectionId: string) {
       include: {
         team: { select: { rank: true } },
       },
+    }),
+    // Attendance: count PRESENT records per student in this section
+    prisma.attendanceRecord.groupBy({
+      by: ["studentId", "status"],
+      where: {
+        studentId: { in: studentIds },
+        attendanceSession: { sectionId },
+      },
+      _count: true,
+    }),
+    // Contest participation (all contests, not just wins)
+    prisma.contestStanding.groupBy({
+      by: ["userId"],
+      where: { userId: { in: studentIds } },
+      _count: true,
+      _sum: { totalScore: true },
     }),
   ]);
 
@@ -135,6 +151,22 @@ export async function recomputeSectionLeaderboard(sectionId: string) {
     if ((registration.team?.rank ?? 999) <= 3) row.top3 += 1;
   }
 
+  // Build attendance map: studentId → { present, absent, late, total }
+  const attendanceMap = new Map<string, { present: number; total: number }>();
+  for (const record of attendanceData) {
+    const entry = attendanceMap.get(record.studentId) ?? { present: 0, total: 0 };
+    const count = typeof record._count === "number" ? record._count : (record._count as { _all: number })._all ?? 0;
+    entry.total += count;
+    if (record.status === "PRESENT") entry.present += count;
+    attendanceMap.set(record.studentId, entry);
+  }
+
+  // Build contest participation map: userId → { count, totalScore }
+  const contestParticipationMap = new Map(contestParticipation.map((entry) => [
+    entry.userId,
+    { count: entry._count, totalScore: entry._sum.totalScore ?? 0 },
+  ]));
+
   const rawExternalScores = section.enrollments.map((enrollment) => {
     const profile = enrollment.student.studentProfile;
     return (
@@ -163,6 +195,13 @@ export async function recomputeSectionLeaderboard(sectionId: string) {
     const assignmentStats = submissionMap.get(student.id);
     const hackathonStatsForStudent = hackathonMap.get(student.id) ?? { registrations: 0, wins: 0, top3: 0 };
 
+    const attendanceStats = attendanceMap.get(student.id) ?? { present: 0, total: 0 };
+    const attendanceRate = attendanceStats.total > 0 ? attendanceStats.present / attendanceStats.total : 0;
+    const attendanceScore = clamp(attendanceRate * 100) * 0.15;
+
+    const contestStats = contestParticipationMap.get(student.id) ?? { count: 0, totalScore: 0 };
+
+    // Rebalanced weights: CGPA 25%, Coding 20%, Assignment 15%, Hackathon 10%, Profile 5%, Attendance 15%, External 10%
     const cgpaRaw =
       studentProfile?.cgpa ??
       ((gradeStats?.avgMaxMarks ?? 0) > 0 ? ((gradeStats?.avgMarks ?? 0) / (gradeStats?.avgMaxMarks ?? 100)) * 10 : 0);
@@ -170,7 +209,7 @@ export async function recomputeSectionLeaderboard(sectionId: string) {
 
     const codingBase =
       (totalProblems > 0 ? ((coding?.problemsSolved ?? 0) / totalProblems) * 50 : 0) +
-      (coding?.contestsParticipated ?? 0) * 5 +
+      contestStats.count * 5 +
       (contestWinMap.get(student.id) ?? 0) * 20;
     const codingScore = clamp(codingBase) * 0.2;
 
@@ -179,7 +218,7 @@ export async function recomputeSectionLeaderboard(sectionId: string) {
     const assignmentBase =
       (totalAssignments > 0 ? ((assignmentStats?.submitted ?? 0) / totalAssignments) * 50 : 0) +
       (avgGradePct / 100) * 50;
-    const assignmentScore = clamp(assignmentBase) * 0.2;
+    const assignmentScore = clamp(assignmentBase) * 0.15;
 
     const hackathonBase =
       hackathonStatsForStudent.registrations * 5 +
@@ -191,8 +230,10 @@ export async function recomputeSectionLeaderboard(sectionId: string) {
       (studentProfile?.skills.length ?? 0) * 3 +
       (studentProfile?.projects.length ?? 0) * 10 +
       (studentProfile?.achievements.length ?? 0) * 5 +
-      (studentProfile?.resumeUrl ? 10 : 0);
-    const profileScore = clamp(profileBase) * 0.1;
+      (studentProfile?.resumeUrl ? 10 : 0) +
+      (studentProfile?.githubUsername ? 5 : 0) +
+      (studentProfile?.leetcodeUsername ? 5 : 0);
+    const profileScore = clamp(profileBase) * 0.05;
 
     const externalRaw =
       (studentProfile?.leetcodeSolved ?? 0) * 0.5 +
@@ -200,9 +241,14 @@ export async function recomputeSectionLeaderboard(sectionId: string) {
       ((studentProfile?.codeforcesRating ?? 0) / 100) +
       (studentProfile?.githubContributions ?? 0) * 0.1;
     const externalBase = maxExternal > 0 ? (externalRaw / maxExternal) * 100 : 0;
-    const externalScore = clamp(externalBase) * 0.15;
+    const externalScore = clamp(externalBase) * 0.1;
 
-    const totalScore = round2(cgpaScore + codingScore + assignmentScore + hackathonScore + profileScore + externalScore);
+    // Participation boost: students in contests or hackathons get up to +10% multiplier
+    const participationEvents = (hackathonStatsForStudent.registrations + contestStats.count);
+    const participationBoost = participationEvents > 0 ? Math.min(1.1, 1 + participationEvents * 0.02) : 1;
+
+    const baseScore = cgpaScore + codingScore + assignmentScore + hackathonScore + profileScore + attendanceScore + externalScore;
+    const totalScore = round2(baseScore * participationBoost);
 
     return {
       sectionId,
@@ -212,7 +258,7 @@ export async function recomputeSectionLeaderboard(sectionId: string) {
       assignmentScore: round2(assignmentScore),
       hackathonScore: round2(hackathonScore),
       profileScore: round2(profileScore),
-      externalScore: round2(externalScore),
+      externalScore: round2(externalScore + attendanceScore), // externalScore stores combined external + attendance
       totalScore,
       previousRank: previousRanks.get(student.id) ?? null,
       student: {
@@ -429,5 +475,111 @@ export async function getPlatformLeaderboard(page = 1, limit = 50) {
       total,
       totalPages: Math.ceil(total / limit),
     },
+  };
+}
+
+export async function getLeaderboardInsights(sectionId: string) {
+  // Grab top 20 students from overall leaderboard
+  const data = await getSectionLeaderboard(sectionId, "overall", undefined, 1, 30);
+  
+  if (data.items.length === 0) {
+    return {
+      success: true,
+      insights: "Not enough data to generate predictive insights.",
+    };
+  }
+
+  const topPerformers = data.items.slice(0, 3).map((item) => ({
+    name: item.student.name,
+    score: item.totalScore,
+    coding: item.codingScore,
+    cgpa: item.cgpaScore,
+    hackathon: item.hackathonScore,
+  }));
+
+  const trendingStudents = data.items
+    .filter((item) => (item.previousRank !== null && (item.rank ?? 999) < item.previousRank) || item.hackathonScore > 30)
+    .slice(0, 3)
+    .map((item) => ({
+      name: item.student.name,
+      rankImprovement: item.previousRank ? item.previousRank - (item.rank ?? 0) : "Rising",
+      codingScore: item.codingScore,
+    }));
+
+  const atRisk = data.items
+    .filter((item) => item.totalScore < 30 || item.cgpaScore < 10)
+    .slice(0, 3)
+    .map((item) => ({
+      name: item.student.name,
+      score: item.totalScore,
+      cgpa: item.cgpaScore,
+    }));
+
+  const promptPayload = {
+    sectionName: data.section.name,
+    averageScore: data.items.reduce((acc, curr) => acc + curr.totalScore, 0) / data.items.length,
+    topPerformers,
+    trendingStudents,
+    atRiskStudents: atRisk,
+  };
+
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new AppError("AI service not configured for predictive insights", 503);
+  }
+
+  const systemPrompt = `You are an expert academic and competitive programming data analyst.
+Analyze the provided JSON leaderboard data for a class section and generate predictive insights.
+
+Format your response as valid JSON strictly matching this schema:
+{
+  "summary": "A 2-sentence executive overview of the class performance.",
+  "topPerformers": "Analysis of what the top performers are doing right (e.g., excelling in coding vs academics).",
+  "risingStars": "Mention specific students showing momentum or high hackathon engagement and predict their trajectory.",
+  "areasOfConcern": "Identify patterns among at-risk students and suggest actionable interventions.",
+  "actionableAdvice": [
+    "Advice point 1",
+    "Advice point 2"
+  ]
+}`;
+
+  const userPrompt = `Analyze this leaderboard snapshot:\n` + JSON.stringify(promptPayload, null, 2);
+
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://rankroom.app",
+      "X-Title": "RankRoom AI Leaderboard Analytics",
+    },
+    body: JSON.stringify({
+      model: process.env.OPENROUTER_MODEL ?? "google/gemini-flash-1.5",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      response_format: { type: "json_object" },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new AppError("Failed to fetch AI insights", 502);
+  }
+
+  const result = await response.json();
+  const rawText = result.choices[0]?.message?.content ?? "{}";
+  
+  let insightsParsed;
+  try {
+    const cleanedText = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
+    insightsParsed = JSON.parse(cleanedText);
+  } catch (err) {
+    throw new AppError("Failed to parse AI insights JSON", 500);
+  }
+
+  return {
+    success: true,
+    data: insightsParsed,
   };
 }

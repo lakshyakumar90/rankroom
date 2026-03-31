@@ -3,6 +3,7 @@ import { authenticate } from "../middleware/auth";
 import { requirePermission, requireScope } from "../middleware/permissions";
 import {
   departmentLeaderboardController,
+  insightsController,
   platformLeaderboardController,
   recomputeLeaderboardController,
   sectionLeaderboardController,
@@ -10,6 +11,7 @@ import {
 
 const router: ExpressRouter = Router();
 
+router.get("/section/:sectionId/insights", authenticate, requireScope((req) => ({ sectionId: req.params.sectionId })), insightsController);
 router.get("/section/:sectionId", authenticate, requireScope((req) => ({ sectionId: req.params.sectionId })), sectionLeaderboardController);
 router.get(
   "/department/:departmentId",

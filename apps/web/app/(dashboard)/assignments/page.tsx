@@ -2,16 +2,24 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 import { api } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { useAuthStore } from "@/store/auth";
 import { Role, type ApiResponse, type Assignment, type AssignmentSubmission } from "@repo/types";
 import { formatDateTime } from "@/lib/utils";
-import { BookOpen, Clock, Upload } from "lucide-react";
+import { BookOpen, Clock, Upload, Plus, Users, ChevronRight, FileText, CheckCircle2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 
 type AssignmentListItem = Assignment & {
@@ -21,16 +29,39 @@ type AssignmentListItem = Assignment & {
   _count: { submissions: number };
 };
 
-export default function AssignmentsPage() {
-  const queryClient = useQueryClient();
+function StatusBadge({ assignment }: { assignment: AssignmentListItem }) {
+  const deadlinePassed = new Date(assignment.dueDate) < new Date();
+  const hasSubmission = !!assignment.mySubmission;
+
+  if (hasSubmission) {
+    const status = assignment.mySubmission?.status;
+    const color =
+      status === "GRADED"
+        ? "bg-emerald-500/10 text-emerald-600"
+        : status === "SUBMITTED"
+          ? "bg-blue-500/10 text-blue-600"
+          : status === "LATE"
+            ? "bg-amber-500/10 text-amber-600"
+            : "bg-muted";
+    return <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${color}`}>{status}</span>;
+  }
+  if (deadlinePassed) {
+    return <span className="rounded-full bg-red-500/10 px-2.5 py-0.5 text-xs font-medium text-red-600">CLOSED</span>;
+  }
+  return <span className="rounded-full bg-green-500/10 px-2.5 py-0.5 text-xs font-medium text-green-600">OPEN</span>;
+}
+
+// ─── Create Assignment Dialog ─────────────────────────────────────────────────
+function CreateAssignmentDialog({ onCreated }: { onCreated?: () => void }) {
   const { user } = useAuthStore();
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
   const [selectedSubjectId, setSelectedSubjectId] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [maxScore, setMaxScore] = useState("100");
   const [targetStudentIds, setTargetStudentIds] = useState<string[]>([]);
-  const [files, setFiles] = useState<Record<string, File | null>>({});
 
   const subjects = useMemo(
     () =>
@@ -38,22 +69,12 @@ export default function AssignmentsPage() {
         new Map(
           (user?.teachingAssignments ?? []).map((entry) => [
             entry.subjectId,
-            { id: entry.subjectId, label: `${entry.subject.name} · ${entry.section.name}` },
+            { id: entry.subjectId, label: `${entry.subject?.name ?? entry.subjectId} · ${entry.section?.name ?? entry.sectionId}` },
           ])
         ).values()
       ),
     [user?.teachingAssignments]
   );
-
-  const canCreate = [Role.TEACHER, Role.CLASS_COORDINATOR, Role.DEPARTMENT_HEAD, Role.ADMIN, Role.SUPER_ADMIN].includes(
-    user?.role ?? Role.STUDENT
-  );
-
-  const { data, isLoading } = useQuery({
-    queryKey: ["assignments"],
-    queryFn: () => api.get<ApiResponse<AssignmentListItem[]>>("/api/assignments/mine"),
-    enabled: !!user,
-  });
 
   const { data: studentsData } = useQuery({
     queryKey: ["assignments-create", "students", selectedSubjectId],
@@ -84,9 +105,205 @@ export default function AssignmentsPage() {
       setDueDate("");
       setMaxScore("100");
       setTargetStudentIds([]);
+      setSelectedSubjectId("");
+      setOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["assignments"] });
+      onCreated?.();
     },
     onError: (error: Error) => toast.error(error.message),
+  });
+
+  const studentOptions = studentsData?.data ?? [];
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button className="gap-2 rounded-xl">
+          <Plus className="size-4" />
+          Create Assignment
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-2xl">
+        <div className="mb-4">
+          <DialogTitle>New Assignment</DialogTitle>
+          <p className="text-sm text-muted-foreground">Create an assignment for your class. Students will be notified.</p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Assignment title" />
+          <select
+            value={selectedSubjectId}
+            onChange={(e) => setSelectedSubjectId(e.target.value)}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="">Select subject</option>
+            {subjects.map((subject) => (
+              <option key={subject.id} value={subject.id}>{subject.label}</option>
+            ))}
+          </select>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Assignment description"
+            className="min-h-28 rounded-md border border-input bg-background px-3 py-2 text-sm md:col-span-2"
+          />
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground">Due Date</label>
+            <Input type="datetime-local" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground">Max Score</label>
+            <Input type="number" min="1" value={maxScore} onChange={(e) => setMaxScore(e.target.value)} />
+          </div>
+
+          {selectedSubjectId && studentOptions.length > 0 && (
+            <div className="space-y-2 md:col-span-2">
+              <p className="text-sm font-medium">Target students (optional — leave empty for all)</p>
+              <div className="grid max-h-44 gap-2 overflow-y-auto rounded-md border border-border p-3 sm:grid-cols-2">
+                {studentOptions.map((entry) => (
+                  <label key={entry.student.id} className="flex cursor-pointer items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={targetStudentIds.includes(entry.student.id)}
+                      onChange={() =>
+                        setTargetStudentIds((current) =>
+                          current.includes(entry.student.id)
+                            ? current.filter((id) => id !== entry.student.id)
+                            : [...current, entry.student.id]
+                        )
+                      }
+                    />
+                    <span>{entry.student.name}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="md:col-span-2">
+            <Button
+              className="w-full"
+              onClick={() => createMutation.mutate()}
+              disabled={!title || !description || !dueDate || !selectedSubjectId || createMutation.isPending}
+            >
+              {createMutation.isPending ? "Creating…" : "Create Assignment"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Teacher Assignment Row ──────────────────────────────────────────────────
+function TeacherAssignmentRow({ assignment }: { assignment: AssignmentListItem }) {
+  return (
+    <TableRow>
+      <TableCell className="font-medium">
+        <div>
+          <p>{assignment.title}</p>
+          <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
+            <Users className="size-3" />
+            {assignment._count.submissions} submitted
+          </div>
+        </div>
+      </TableCell>
+      <TableCell>{formatDateTime(assignment.dueDate)}</TableCell>
+      <TableCell>
+        <span className="font-semibold">{assignment.maxScore}</span>
+      </TableCell>
+      <TableCell className="text-right">
+        <Button variant="outline" size="sm" asChild>
+          <Link href={`/assignments/${assignment.id}`}>
+            View Details
+          </Link>
+        </Button>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+// ─── Student Assignment Row ───────────────────────────────────────────────────
+function StudentAssignmentRow({
+  assignment,
+  file,
+  onFileChange,
+  onSubmit,
+  isSubmitting,
+}: {
+  assignment: AssignmentListItem;
+  file: File | null | undefined;
+  onFileChange: (id: string, file: File | null) => void;
+  onSubmit: (id: string) => void;
+  isSubmitting: boolean;
+}) {
+  const isPast = new Date(assignment.dueDate) < new Date();
+  const hasSubmission = !!assignment.mySubmission;
+
+  return (
+    <TableRow>
+      <TableCell className="font-medium">
+        <div className="flex flex-col">
+          <span className="text-sm font-semibold">{assignment.title}</span>
+          <span className="text-xs text-muted-foreground line-clamp-1 mt-0.5">{assignment.description}</span>
+        </div>
+      </TableCell>
+      <TableCell>
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Clock className="size-3.5" />
+          {formatDateTime(assignment.dueDate)}
+        </div>
+      </TableCell>
+      <TableCell><StatusBadge assignment={assignment} /></TableCell>
+      <TableCell>
+        {hasSubmission ? (
+          <span className="font-semibold">{assignment.mySubmission?.score ?? "—"} <span className="text-xs font-normal text-muted-foreground">/ {assignment.maxScore}</span></span>
+        ) : (
+          <span className="text-muted-foreground text-sm">— / {assignment.maxScore}</span>
+        )}
+      </TableCell>
+      <TableCell className="text-right">
+        {hasSubmission ? (
+          <div className="flex justify-end">
+            <Button variant="outline" size="sm" asChild>
+              <a href={assignment.mySubmission!.fileUrl ?? undefined} target="_blank" rel="noreferrer">
+                View Submission
+              </a>
+            </Button>
+          </div>
+        ) : isPast ? (
+          <span className="text-xs text-muted-foreground">Closed</span>
+        ) : (
+          <div className="flex items-center justify-end gap-2">
+            <Input
+              type="file"
+              onChange={(e) => onFileChange(assignment.id, e.target.files?.[0] ?? null)}
+              className="h-8 text-xs max-w-[150px]"
+            />
+            <Button onClick={() => onSubmit(assignment.id)} disabled={isSubmitting || !file} size="sm" className="gap-2">
+              <Upload className="size-3.5" />
+              Submit
+            </Button>
+          </div>
+        )}
+      </TableCell>
+    </TableRow>
+  );
+}
+
+// ─── Main Page ─────────────────────────────────────────────────────────────────
+export default function AssignmentsPage() {
+  const queryClient = useQueryClient();
+  const { user } = useAuthStore();
+  const [files, setFiles] = useState<Record<string, File | null>>({});
+
+  const canCreate = [Role.TEACHER, Role.CLASS_COORDINATOR, Role.DEPARTMENT_HEAD, Role.ADMIN, Role.SUPER_ADMIN].includes(
+    user?.role ?? Role.STUDENT
+  );
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["assignments"],
+    queryFn: () => api.get<ApiResponse<AssignmentListItem[]>>("/api/assignments/mine"),
+    enabled: !!user,
   });
 
   const submitMutation = useMutation({
@@ -104,159 +321,130 @@ export default function AssignmentsPage() {
   });
 
   const assignments = data?.data ?? [];
-  const studentOptions = studentsData?.data ?? [];
+  const isStudent = user?.role === Role.STUDENT;
+
+  const activeAssignments = assignments.filter((a) => new Date(a.dueDate) >= new Date());
+  const pastAssignments = assignments.filter((a) => new Date(a.dueDate) < new Date());
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Assignments</h1>
           <p className="text-muted-foreground">
-            {user?.role === Role.STUDENT ? "Submit work before the deadline." : "Create and review subject-based assignments."}
+            {isStudent
+              ? "Submit your work before the deadline."
+              : "Manage and review subject-based assignments."}
           </p>
         </div>
+        {canCreate && <CreateAssignmentDialog />}
       </div>
 
-      {canCreate && subjects.length > 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Create Assignment</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-3 md:grid-cols-2">
-            <Input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Assignment title" />
-            <select
-              value={selectedSubjectId}
-              onChange={(event) => setSelectedSubjectId(event.target.value)}
-              className="h-9 border border-input bg-background px-3 text-sm"
-            >
-              <option value="">Select subject</option>
-              {subjects.map((subject) => (
-                <option key={subject.id} value={subject.id}>
-                  {subject.label}
-                </option>
-              ))}
-            </select>
-            <textarea
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder="Assignment description"
-              className="min-h-28 border border-input bg-background px-3 py-2 text-sm md:col-span-2"
-            />
-            <Input type="datetime-local" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
-            <Input type="number" min="1" value={maxScore} onChange={(event) => setMaxScore(event.target.value)} />
-            {selectedSubjectId ? (
-              <div className="space-y-2 md:col-span-2">
-                <p className="text-sm font-medium">Selected students (optional)</p>
-                <div className="grid max-h-44 gap-2 overflow-y-auto border border-border p-3 sm:grid-cols-2">
-                  {studentOptions.map((entry) => (
-                    <label key={entry.student.id} className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={targetStudentIds.includes(entry.student.id)}
-                        onChange={() =>
-                          setTargetStudentIds((current) =>
-                            current.includes(entry.student.id)
-                              ? current.filter((id) => id !== entry.student.id)
-                              : [...current, entry.student.id]
-                          )
-                        }
-                      />
-                      <span>{entry.student.name}</span>
-                    </label>
-                  ))}
-                </div>
+      {/* Teacher: summary stats */}
+      {!isStudent && assignments.length > 0 && (
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Card>
+            <CardContent className="flex items-center gap-3 p-4">
+              <div className="flex size-10 items-center justify-center rounded-xl bg-blue-500/10 text-blue-500">
+                <FileText className="size-5" />
               </div>
-            ) : null}
-            <div className="md:col-span-2">
-              <Button
-                onClick={() => createMutation.mutate()}
-                disabled={!title || !description || !dueDate || !selectedSubjectId || createMutation.isPending}
-              >
-                Create assignment
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
+              <div>
+                <p className="text-2xl font-bold">{assignments.length}</p>
+                <p className="text-xs text-muted-foreground">Total assignments</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="flex items-center gap-3 p-4">
+              <div className="flex size-10 items-center justify-center rounded-xl bg-green-500/10 text-green-500">
+                <CheckCircle2 className="size-5" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{activeAssignments.length}</p>
+                <p className="text-xs text-muted-foreground">Active</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="flex items-center gap-3 p-4">
+              <div className="flex size-10 items-center justify-center rounded-xl bg-purple-500/10 text-purple-500">
+                <Users className="size-5" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{assignments.reduce((sum, a) => sum + a._count.submissions, 0)}</p>
+                <p className="text-xs text-muted-foreground">Total submissions</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
-      <div className="space-y-4">
-        {isLoading ? (
-          Array.from({ length: 4 }).map((_, i) => (
-            <Card key={i}>
-              <CardContent className="p-5">
-                <Skeleton className="mb-2 h-5 w-48" />
-                <Skeleton className="mb-3 h-4 w-full" />
-                <div className="flex gap-3">
-                  <Skeleton className="h-4 w-24" />
-                  <Skeleton className="h-4 w-24" />
+      {/* Assignment list */}
+      {isLoading ? (
+        <div className="space-y-4">
+          <Skeleton className="h-[400px] w-full" />
+        </div>
+      ) : assignments.length === 0 ? (
+        <div className="py-16 text-center text-muted-foreground">
+          <BookOpen className="mx-auto mb-3 size-12 opacity-20" />
+          <p>No assignments yet</p>
+          {canCreate && (
+            <p className="mt-1 text-sm">Create your first assignment using the button above.</p>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-8">
+          {Object.entries(
+            assignments.reduce((acc, assignment) => {
+              const key = assignment.subjectId;
+              if (!acc[key]) acc[key] = { subject: assignment.subject, assignments: [] };
+              acc[key].assignments.push(assignment);
+              return acc;
+            }, {} as Record<string, { subject: AssignmentListItem['subject'], assignments: AssignmentListItem[] }>)
+          ).map(([subjectId, group]) => (
+            <Card key={subjectId}>
+              <CardHeader className="pb-3 border-b border-border bg-muted/20">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <BookOpen className="size-4" />
+                  {group.subject.name}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader className="bg-muted/40">
+                      <TableRow>
+                        <TableHead className="w-1/3">Assignment</TableHead>
+                        <TableHead>Deadline</TableHead>
+                        {isStudent && <TableHead>Status</TableHead>}
+                        <TableHead>{isStudent ? "Score" : "Max Score"}</TableHead>
+                        <TableHead className="text-right">Action</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {group.assignments.map((assignment) =>
+                        isStudent ? (
+                          <StudentAssignmentRow
+                            key={assignment.id}
+                            assignment={assignment}
+                            file={files[assignment.id]}
+                            onFileChange={(id, file) => setFiles((curr) => ({ ...curr, [id]: file }))}
+                            onSubmit={(id) => submitMutation.mutate(id)}
+                            isSubmitting={submitMutation.isPending}
+                          />
+                        ) : (
+                          <TeacherAssignmentRow key={assignment.id} assignment={assignment} />
+                        )
+                      )}
+                    </TableBody>
+                  </Table>
                 </div>
               </CardContent>
             </Card>
-          ))
-        ) : assignments.length === 0 ? (
-          <div className="py-12 text-center text-muted-foreground">
-            <BookOpen className="mx-auto mb-3 h-12 w-12 opacity-20" />
-            <p>No assignments available</p>
-          </div>
-        ) : (
-          assignments.map((assignment) => {
-            const deadlinePassed = new Date(assignment.dueDate) < new Date();
-            const hasSubmission = !!assignment.mySubmission;
-            return (
-              <Card key={assignment.id} className={deadlinePassed && !hasSubmission ? "border-destructive/40" : ""}>
-                <CardContent className="space-y-4 p-5">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="font-semibold">{assignment.title}</h3>
-                        <Badge variant="outline">{assignment.subject.name}</Badge>
-                        {hasSubmission ? (
-                          <Badge variant="secondary">{assignment.mySubmission?.status}</Badge>
-                        ) : deadlinePassed ? (
-                          <Badge variant="destructive">Closed</Badge>
-                        ) : (
-                          <Badge variant="outline">Open</Badge>
-                        )}
-                      </div>
-                      <p className="text-sm text-muted-foreground">{assignment.description}</p>
-                      <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
-                        <span className="flex items-center gap-1">
-                          <Clock className="h-3 w-3" />
-                          Due {formatDateTime(assignment.dueDate)}
-                        </span>
-                        <span>Max {assignment.maxScore} pts</span>
-                        <span>by {assignment.teacher.name}</span>
-                      </div>
-                    </div>
-                    {user?.role !== Role.STUDENT ? (
-                      <div className="text-right text-sm">
-                        <p className="font-medium">{assignment._count.submissions}</p>
-                        <p className="text-xs text-muted-foreground">submissions</p>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  {user?.role === Role.STUDENT && !deadlinePassed && !hasSubmission ? (
-                    <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
-                      <Input
-                        type="file"
-                        className="max-w-sm"
-                        onChange={(event) =>
-                          setFiles((current) => ({ ...current, [assignment.id]: event.target.files?.[0] ?? null }))
-                        }
-                      />
-                      <Button onClick={() => submitMutation.mutate(assignment.id)} disabled={submitMutation.isPending}>
-                        <Upload className="mr-2 h-4 w-4" />
-                        Submit
-                      </Button>
-                    </div>
-                  ) : null}
-                </CardContent>
-              </Card>
-            );
-          })
-        )}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

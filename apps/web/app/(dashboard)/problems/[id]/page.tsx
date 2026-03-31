@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ChevronDown, ChevronLeft, ChevronRight, Copy, Loader2, Play, RotateCcw, Settings2, Terminal, Timer, Trash2 } from "lucide-react";
+import { Bot, ChevronDown, ChevronLeft, ChevronRight, Copy, Loader2, Play, RotateCcw, Settings2, Terminal, Timer, Trash2, Zap, Clock4, Database, Sparkles, AlertCircle } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn, formatMemory, formatRelativeTime, formatRuntime } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +26,7 @@ import { useProblemStore } from "@/stores/problemStore";
 import { useSubmission } from "@/hooks/useSubmission";
 import { SubmissionResultPanel } from "@/components/coding/SubmissionResultPanel";
 import { DiffViewer } from "@/components/coding/DiffViewer";
+import { AiDrawer } from "@/components/coding/AiDrawer";
 
 interface ProblemDetailResponse {
   id: string;
@@ -130,6 +131,7 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
   const setRunning = useProblemStore((state) => state.setRunning);
   const setSubmitting = useProblemStore((state) => state.setSubmitting);
   const { submitCode } = useSubmission(id, contestId);
+  const [aiDrawerOpen, setAiDrawerOpen] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["problem-detail", id, contestId],
@@ -160,6 +162,7 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
   const isContestAttemptLocked = !!contestContext?.hasAttempted;
   const submitDisabled = isSubmitting || (contestContext ? isContestAttemptLocked || contestContext.status !== "LIVE" || !contestContext.isRegistered : false);
 
+  // Reset state and hydration ref when problem ID changes
   useEffect(() => {
     setElapsedSeconds(0);
     setCustomCases([""]);
@@ -174,27 +177,33 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
     hydratedCodeKeyRef.current = null;
   }, [id]);
 
+  // Initial hydration from localStorage
   useEffect(() => {
+    if (!id) return;
+    
+    // 1. Restore language
     const savedLanguage = window.localStorage.getItem(`rankroom:language:${id}`);
     if (savedLanguage && savedLanguage !== language) {
       setLanguage(savedLanguage);
-      return;
+      return; // Wait for next render with updated language
     }
 
+    // 2. Restore code for this specific ID and language
     const codeKey = `${id}:${language}`;
     if (hydratedCodeKeyRef.current === codeKey) return;
-    hydratedCodeKeyRef.current = codeKey;
-
+    
     const savedCode = window.localStorage.getItem(`rankroom:code:${codeKey}`);
-    if (savedCode && savedCode !== code[codeKey]) {
+    const currentCode = code[codeKey];
+    
+    if (savedCode && savedCode !== currentCode) {
+      hydratedCodeKeyRef.current = codeKey;
       setCode(id, language, savedCode);
-      return;
-    }
-
-    if (!code[codeKey]) {
+    } else if (!currentCode && problem) {
+      // Fallback to starter code if nothing in store or storage
+      hydratedCodeKeyRef.current = codeKey;
       setCode(id, language, getPreferredCode(problem, language));
     }
-  }, [code, id, language, problem, setCode, setLanguage]);
+  }, [id, language, problem, setCode, setLanguage]); // removed 'code' to avoid typing loop
 
   useEffect(() => {
     window.localStorage.setItem(`rankroom:language:${id}`, language);
@@ -233,7 +242,7 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  });
+  }, [handleRun, handleSubmit]); // add deps
 
   function updateCustomCase(index: number, value: string) {
     setCustomCases((current) => current.map((entry, entryIndex) => (entryIndex === index ? value : entry)));
@@ -292,6 +301,16 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
 
   return (
     <div className="-m-6 flex h-screen flex-col overflow-hidden bg-background">
+      <AiDrawer
+        open={aiDrawerOpen}
+        onClose={() => setAiDrawerOpen(false)}
+        problemId={id}
+        problemTitle={problem.title}
+        problemDescription={problem.description}
+        code={activeCode}
+        language={language}
+      />
+
       <div className="flex h-12 items-center justify-between border-b border-border px-4">
         <div className="flex items-center gap-3 text-sm">
           <span className="flex h-6 w-6 items-center justify-center rounded-md bg-primary text-primary-foreground">R</span>
@@ -338,6 +357,18 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
+
+          <div className="h-5 w-px bg-border max-sm:hidden" />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setAiDrawerOpen(true)}
+            title="AI Assistant"
+            className="text-primary hover:bg-primary/10 hover:text-primary max-sm:hidden"
+          >
+            <Bot className="h-4 w-4" />
+          </Button>
+
           <Button size="sm" className="bg-green-500 text-white hover:bg-green-600" onClick={() => void handleSubmit()} disabled={submitDisabled}>
             {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             {contestContext && isContestAttemptLocked ? "Attempt Used" : "Submit"}
@@ -417,6 +448,7 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
                 </TabsContent>
 
                 <TabsContent value="solutions" className="px-6 py-5 text-sm text-muted-foreground">Official solutions are not available yet.</TabsContent>
+
                 <TabsContent value="submissions" className="px-6 py-5">
                   <div className="overflow-hidden rounded-lg border border-border">
                     <div className="grid grid-cols-[120px,100px,100px,100px,140px] gap-3 border-b border-border bg-muted/40 px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">

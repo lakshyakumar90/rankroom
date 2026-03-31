@@ -10,7 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { ApiResponse } from "@repo/types";
-import { CalendarDays, Trophy, Users } from "lucide-react";
+import { CalendarDays, Trophy, Users, Clock, CheckCircle2, ChevronRight, Check } from "lucide-react";
+import { formatDateTime } from "@/lib/utils";
 
 interface HackathonEligibility {
   isEligible: boolean;
@@ -55,7 +56,7 @@ export default function HackathonsPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <div className="rounded-3xl border border-border bg-gradient-to-r from-sky-500/15 via-background to-emerald-500/10 p-6">
+      <div className="rounded-3xl border border-border bg-linear-to-r from-sky-500/15 via-background to-emerald-500/10 p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <h1 className="text-3xl font-semibold tracking-tight">Hackathons & Competitions</h1>
@@ -86,67 +87,142 @@ export default function HackathonsPage() {
       <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
         {isLoading ? (
           Array.from({ length: 6 }).map((_, index) => (
-            <Card key={index} className="h-72 animate-pulse" />
+            <Card key={index} className="h-[400px] animate-pulse rounded-2xl bg-muted/20" />
           ))
+        ) : hackathons.length === 0 ? (
+          <div className="col-span-full py-20 text-center text-muted-foreground border-2 border-dashed border-border/50 rounded-2xl">
+            <Trophy className="mx-auto mb-4 size-12 opacity-20" />
+            <p>No hackathons or competitions found for this filter.</p>
+          </div>
         ) : (
-          hackathons.map((hackathon) => (
-            <Card key={hackathon.id} className="overflow-hidden">
-              <div className="h-24 bg-gradient-to-r from-cyan-500/25 via-emerald-500/20 to-amber-500/20" />
-              <CardHeader>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <Badge variant="secondary" className="mb-3">
-                      {hackathon.department?.name ?? "Open"}
+          hackathons.map((hackathon) => {
+            const now = new Date();
+            const regDeadline = new Date(hackathon.registrationDeadline);
+            const start = new Date(hackathon.startDate);
+            const end = new Date(hackathon.endDate);
+
+            // Timeline calculations
+            const totalDuration = end.getTime() - regDeadline.getTime();
+            let progress = 0;
+            if (now > end) progress = 100;
+            else if (now > regDeadline) {
+              progress = ((now.getTime() - regDeadline.getTime()) / totalDuration) * 100;
+            }
+
+            const isRegistrationOpen = now < regDeadline;
+            const isOngoing = now >= start && now <= end;
+            const isFinished = now > end;
+
+            return (
+              <Card key={hackathon.id} className="group relative overflow-hidden rounded-2xl border-border/50 transition-all hover:border-primary/40 hover:shadow-lg flex flex-col h-full bg-card">
+                <div className="absolute inset-0 bg-linear-to-br from-primary/5 via-transparent to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+                
+                {/* Image / Header Banner */}
+                <div className="relative h-28 bg-linear-to-r from-cyan-500/20 via-emerald-500/15 to-amber-500/20 p-5">
+                  <div className="flex items-start justify-between">
+                    <Badge variant={hackathon.status === "LIVE" || hackathon.status === "ONGOING" ? "default" : "secondary"} className="bg-background/80 backdrop-blur-sm">
+                      {hackathon.department?.name ?? "Open to All"}
                     </Badge>
-                    <CardTitle className="text-lg">{hackathon.title}</CardTitle>
+                    <Badge variant="outline" className={`bg-background/80 backdrop-blur-sm shadow-sm ${isOngoing ? "border-green-500/50 text-green-600" : ""}`}>
+                      {hackathon.status.replace("_", " ")}
+                    </Badge>
                   </div>
-                  <Badge variant="outline">{hackathon.status}</Badge>
                 </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <p className="line-clamp-2 text-sm text-muted-foreground">
-                  {hackathon.description}
-                </p>
-                <div className="space-y-2 text-sm text-muted-foreground">
-                  <div className="flex items-center gap-2">
-                    <CalendarDays className="size-4" />
-                    {new Date(hackathon.startDate).toLocaleDateString()} -{" "}
-                    {new Date(hackathon.endDate).toLocaleDateString()}
+
+                <CardContent className="relative -mt-6 flex-1 flex flex-col px-5 pb-5">
+                  {/* Title & Description */}
+                  <div className="mb-6 rounded-xl border border-border bg-background p-4 shadow-sm">
+                    <CardTitle className="mb-2 text-lg font-bold leading-tight">
+                      {hackathon.title}
+                    </CardTitle>
+                    <p className="line-clamp-2 text-sm text-muted-foreground">
+                      {hackathon.description}
+                    </p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Users className="size-4" />
-                    {hackathon.minTeamSize}-{hackathon.maxTeamSize} members
-                  </div>
-                  {hackathon.prizeDetails && (
+
+                  {/* Attributes Grid */}
+                  <div className="mb-6 grid grid-cols-2 gap-4 text-sm text-muted-foreground">
                     <div className="flex items-center gap-2">
-                      <Trophy className="size-4" />
-                      {hackathon.prizeDetails}
+                      <div className="flex size-8 items-center justify-center rounded-full bg-muted/50 text-foreground">
+                        <Users className="size-4" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-foreground">{hackathon.minTeamSize}-{hackathon.maxTeamSize}</p>
+                        <p className="text-[10px] uppercase tracking-wider">Members</p>
+                      </div>
                     </div>
-                  )}
-                </div>
-                {user?.role === "STUDENT" ? (
-                  <div
-                    className={`rounded-xl border px-3 py-2 text-sm ${
-                      hackathon.eligibility?.isEligible
-                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                        : "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300"
-                    }`}
-                  >
-                    {hackathon.eligibility?.isEligible
-                      ? "You're eligible to register"
-                      : hackathon.eligibility?.reason ?? "Eligibility unavailable"}
+                    {hackathon.prizeDetails && (
+                      <div className="flex items-center gap-2">
+                        <div className="flex size-8 items-center justify-center rounded-full bg-amber-500/10 text-amber-500">
+                          <Trophy className="size-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-medium text-foreground truncate">{hackathon.prizeDetails}</p>
+                          <p className="text-[10px] uppercase tracking-wider">Prize Pool</p>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                ) : (
-                  <div className="rounded-xl border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                    {user ? "Organizer view" : "Login to check eligibility"}
+
+                  {/* Timeline Progress */}
+                  <div className="mb-6 space-y-3 rounded-lg bg-muted/30 p-4 border border-border/50">
+                    <div className="flex items-center justify-between text-xs font-medium">
+                      <span className={isRegistrationOpen ? "text-primary font-bold" : "text-muted-foreground"}>Reg. Deadline</span>
+                      <span className={isOngoing ? "text-green-600 font-bold" : "text-muted-foreground"}>Results / End</span>
+                    </div>
+                    
+                    <div className="relative h-2 w-full rounded-full bg-muted overflow-hidden">
+                      <div 
+                        className={`absolute left-0 top-0 h-full rounded-full transition-all duration-500 ${isFinished ? "bg-muted-foreground/50" : isOngoing ? "bg-green-500" : "bg-primary"}`}
+                        style={{ width: `${Math.max(5, progress)}%` }} 
+                      />
+                    </div>
+                    
+                    <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                      <span>{new Date(hackathon.registrationDeadline).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                      <span>Starts: {new Date(hackathon.startDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                      <span>{new Date(hackathon.endDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                    </div>
                   </div>
-                )}
-                <Button asChild className="w-full">
-                  <Link href={`/hackathons/${hackathon.id}`}>View details</Link>
-                </Button>
-              </CardContent>
-            </Card>
-          ))
+
+                  {/* Footer / Eligibility */}
+                  <div className="mt-auto space-y-3 pt-2">
+                    {user?.role === "STUDENT" ? (
+                      <div
+                        className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-xs font-medium ${
+                          hackathon.eligibility?.isEligible
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:border-emerald-500/20 dark:text-emerald-300"
+                            : "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:border-rose-500/20 dark:text-rose-300"
+                        }`}
+                      >
+                        {hackathon.eligibility?.isEligible ? (
+                          <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" />
+                        ) : (
+                          <Clock className="mt-0.5 size-3.5 shrink-0" />
+                        )}
+                        <span>
+                          {hackathon.eligibility?.isEligible
+                            ? "You meet all eligibility requirements"
+                            : hackathon.eligibility?.reason ?? "Eligibility criteria not met"}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 rounded-xl border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                        <Users className="size-3.5" />
+                        <span>{user ? "Organizer / Staff View" : "Login to participate"}</span>
+                      </div>
+                    )}
+                    
+                    <Button asChild className="w-full gap-2 rounded-xl group-hover:bg-primary group-hover:text-primary-foreground transition-all">
+                      <Link href={`/hackathons/${hackathon.id}`}>
+                        View Details <ChevronRight className="size-4" />
+                      </Link>
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })
         )}
       </div>
     </div>

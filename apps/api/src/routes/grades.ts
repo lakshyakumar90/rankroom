@@ -326,6 +326,57 @@ router.patch("/:id", async (req, res, next) => {
   }
 });
 
+router.get("/student/:studentId/cgpa", async (req, res, next) => {
+  try {
+    if (req.user!.role === Role.STUDENT && req.user!.id !== req.params.studentId) {
+      throw new AppError("Forbidden", 403);
+    }
+
+    const grades = await prisma.grade.findMany({
+      where: { studentId: req.params.studentId },
+      include: { subject: { select: { id: true, name: true, code: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+
+    // Weighted CGPA calculation:
+    // MID → max 25, FINAL → max 50, ASSIGNMENT → max 15, INTERNAL → max 10
+    const MAX_MARKS: Record<string, number> = { MID: 25, FINAL: 50, ASSIGNMENT: 15, INTERNAL: 10 };
+
+    // Group by subject then compute a per-subject percentage across exam types
+    const subjectMap = new Map<string, { name: string; code: string; totalObtained: number; totalMax: number }>();
+    for (const g of grades) {
+      if (!subjectMap.has(g.subjectId)) {
+        subjectMap.set(g.subjectId, { name: g.subject.name, code: g.subject.code, totalObtained: 0, totalMax: 0 });
+      }
+      const entry = subjectMap.get(g.subjectId)!;
+      const maxForType = MAX_MARKS[g.examType] ?? g.maxMarks;
+      // Normalize marks to the expected max for this exam type
+      const normalizedMarks = (g.marks / g.maxMarks) * maxForType;
+      entry.totalObtained += normalizedMarks;
+      entry.totalMax += maxForType;
+    }
+
+    const subjectBreakdown = Array.from(subjectMap.entries()).map(([subjectId, data]) => ({
+      subjectId,
+      subjectName: data.name,
+      subjectCode: data.code,
+      totalObtained: Math.round(data.totalObtained * 10) / 10,
+      totalMax: data.totalMax,
+      percentage: data.totalMax > 0 ? Math.round((data.totalObtained / data.totalMax) * 1000) / 10 : 0,
+      cgpaPoints: data.totalMax > 0 ? Math.round((data.totalObtained / data.totalMax) * 100) / 10 : 0,
+    }));
+
+    const cgpa =
+      subjectBreakdown.length > 0
+        ? Math.round((subjectBreakdown.reduce((sum, s) => sum + s.cgpaPoints, 0) / subjectBreakdown.length) * 100) / 100
+        : 0;
+
+    res.json({ success: true, data: { cgpa, subjectBreakdown, totalSubjects: subjectBreakdown.length } });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/subject/:subjectId/report", async (req, res, next) => {
   try {
     const subject = await ensureSubjectGradeAccess(req.user!, req.params.subjectId);

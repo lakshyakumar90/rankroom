@@ -52,9 +52,12 @@ export function errorHandler(
 
   if (/judge0/i.test(err.message)) {
     logger.error({ err, path: req.path, method: req.method }, "Judge0 error");
-    res.status(503).json({
+    const isConnError = /ECONNREFUSED|ECONNRESET|ETIMEDOUT|AbortError|fetch failed|network/i.test(err.message);
+    res.status(isConnError ? 503 : 400).json({
       success: false,
-      error: "Judge0 is unavailable. Start the Judge0 service and try again.",
+      error: isConnError
+        ? "Judge0 service is unreachable. Make sure the local Docker stack is running."
+        : err.message.replace(/^Judge0\s+/i, ""),
     });
     return;
   }
