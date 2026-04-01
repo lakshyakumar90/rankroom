@@ -1,3 +1,13 @@
+# Abstract
+
+Modern educational institutions increasingly rely on digital platforms to manage administrative tasks, track academic progress, and foster student engagement. However, the current digital ecosystem is highly fragmented, with disparate tools used for routine learning management and extracurricular competitive events. This separation creates data silos, increases administrative overhead, and fails to provide a cohesive, motivating experience for students.
+
+This project introduces RankRoom, a comprehensive academic management and engagement platform designed to unify daily educational workflows with gamified learning experiences. The system employs a robust, multi-tier Role-Based Access Control (RBAC) architecture—encompassing Admin, Department Head, Class Coordinator, Teacher, and Student roles—to enforce strict data visibility and access logic mapping directly to real-world institutional hierarchies. 
+
+RankRoom centralizes core academic functions, such as real-time attendance tracking and assignment lifecycles, and seamlessly integrates them with a sophisticated event module capable of hosting subject-level contests and institution-wide hackathons. To drive intrinsically motivated learning, the platform implements a dynamic, points-based gamification engine with both localized (class/subject) and global leaderboards. Furthermore, the system provisions role-specific analytics dashboards, offering granular performance insights and real-time monitoring. By intertwining standard academic tracking with competitive evaluation, RankRoom addresses systemic inefficiencies of traditional Learning Management Systems (LMS), ultimately streamlining administration while actively stimulating student participation and achievement.
+
+---
+
 # 1. Introduction and Problem Statement
 
 ## 1.1 Domain and Need for the System

@@ -1,4 +1,4 @@
-import { JUDGE0_TIMEOUT_MS, JUDGE0_URL } from "../config/judge0";
+import { JUDGE0_TIMEOUT_MS, JUDGE0_URL, JUDGE0_CPU_TIME_LIMIT, JUDGE0_WALL_TIME_LIMIT, JUDGE0_MEMORY_LIMIT } from "../config/judge0";
 import type { TestResult, Verdict } from "@repo/types";
 
 const JUDGE0_API_KEY = process.env["JUDGE0_API_KEY"] ?? "";
@@ -108,41 +108,64 @@ export function mapVerdict(statusId: number): Verdict {
   }
 }
 
-export async function submitToJudge0(source_code: string, language_id: number, stdin: string, expected_output?: string) {
+export async function submitToJudge0(
+  source_code: string,
+  language_id: number,
+  stdin: string,
+  expected_output?: string
+) {
   const response = await judgeFetch("/submissions?base64_encoded=true&wait=false", {
     method: "POST",
     body: JSON.stringify({
       source_code: encode(source_code),
       language_id,
       stdin: encode(stdin),
+      cpu_time_limit: JUDGE0_CPU_TIME_LIMIT,
+      wall_time_limit: JUDGE0_WALL_TIME_LIMIT,
+      memory_limit: JUDGE0_MEMORY_LIMIT,
       ...(expected_output !== undefined ? { expected_output: encode(expected_output) } : {}),
     }),
   });
 
   if (!response.ok) {
-    throw new Error(`Judge0 submit failed: ${response.status}`);
+    const body = await response.text().catch(() => "");
+    throw new Error(`Judge0 submit failed: ${response.status} ${body}`);
   }
 
   const data = (await response.json()) as { token: string };
   return data.token;
 }
 
+// Sentinel result returned when our polling exhausts retries (not a Judge0 hard TLE).
+const POLLING_TIMEOUT_RESULT: Judge0Result = {
+  status: { id: 5, description: "Time Limit Exceeded" },
+  stdout: null,
+  stderr: "Execution timed out while waiting for Judge0 to respond. Try again.",
+  compile_output: null,
+  time: null,
+  memory: null,
+};
+
 export async function pollResult(token: string): Promise<Judge0Result> {
-  for (let attempt = 0; attempt < 10; attempt++) {
+  const MAX_ATTEMPTS = 20;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const response = await judgeFetch(`/submissions/${token}?base64_encoded=true`);
     if (!response.ok) {
       throw new Error(`Judge0 poll failed: ${response.status}`);
     }
 
     const result = normalizeJudgeResult((await response.json()) as Judge0Result);
+    // status.id > 2 means the submission has finished (not In Queue=1, not Processing=2)
     if (result.status.id > 2) {
       return result;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    // Progressive backoff: 500ms, 750ms, 1000ms … capped at 2000ms
+    const delay = Math.min(500 + attempt * 250, 2000);
+    await new Promise((resolve) => setTimeout(resolve, delay));
   }
 
-  throw new Error("Judge0 polling timed out");
+  return POLLING_TIMEOUT_RESULT;
 }
 
 export async function runBatch(
@@ -150,6 +173,8 @@ export async function runBatch(
   language_id: number,
   testCases: { input: string; expected_output: string }[]
 ): Promise<Judge0Result[]> {
+  if (testCases.length === 0) return [];
+
   const response = await judgeFetch("/submissions/batch?base64_encoded=true", {
     method: "POST",
     body: JSON.stringify({
@@ -158,36 +183,57 @@ export async function runBatch(
         language_id,
         stdin: encode(testCase.input),
         expected_output: encode(testCase.expected_output),
+        cpu_time_limit: JUDGE0_CPU_TIME_LIMIT,
+        wall_time_limit: JUDGE0_WALL_TIME_LIMIT,
+        memory_limit: JUDGE0_MEMORY_LIMIT,
       })),
     }),
   });
 
   if (!response.ok) {
-    throw new Error(`Judge0 batch submit failed: ${response.status}`);
+    const errorBody = await response.text().catch(() => "");
+    throw new Error(`Judge0 batch submit failed: ${response.status} ${errorBody}`);
   }
 
   const submissions = (await response.json()) as { token: string }[];
   const tokens = submissions.map((submission) => submission.token);
 
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const batchResponse = await judgeFetch(`/submissions/batch?tokens=${tokens.join(",")}&base64_encoded=true`);
+  // Seed with sentinel so we always have something to return on timeout
+  let lastNormalized: Judge0Result[] = tokens.map(() => POLLING_TIMEOUT_RESULT);
+
+  const MAX_ATTEMPTS = 20;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const batchResponse = await judgeFetch(
+      `/submissions/batch?tokens=${tokens.join(",")}&base64_encoded=true`
+    );
     if (!batchResponse.ok) {
       throw new Error(`Judge0 batch poll failed: ${batchResponse.status}`);
     }
 
     const batch = (await batchResponse.json()) as { submissions: Judge0Result[] };
-    const normalized = batch.submissions.map(normalizeJudgeResult);
-    if (normalized.every((submission) => submission.status.id > 2)) {
-      return normalized;
+    lastNormalized = batch.submissions.map(normalizeJudgeResult);
+
+    // All done when every submission has a terminal status (id > 2)
+    if (lastNormalized.every((s) => s.status.id > 2)) {
+      return lastNormalized;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    // Progressive backoff: 500ms → 2000ms
+    const delay = Math.min(500 + attempt * 250, 2000);
+    await new Promise((resolve) => setTimeout(resolve, delay));
   }
 
-  throw new Error("Judge0 batch polling timed out");
+  // Return whatever we have; still-pending ones become POLLING_TIMEOUT_RESULT
+  return lastNormalized.map((result) =>
+    result.status.id <= 2 ? POLLING_TIMEOUT_RESULT : result
+  );
 }
 
-export function toTestResult(result: Judge0Result, caseIndex: number, expected: string | null): TestResult {
+export function toTestResult(
+  result: Judge0Result,
+  caseIndex: number,
+  expected: string | null
+): TestResult {
   const verdict = mapVerdict(result.status.id);
   return {
     caseIndex,

@@ -235,6 +235,16 @@ router.patch("/profile", authenticate, validate(updateProfileSchema), async (req
       );
     }
 
+    if (githubUsername !== undefined) {
+      updates.push(
+        prisma.studentProfile.upsert({
+          where: { userId: req.user!.id },
+          update: { githubUsername },
+          create: { userId: req.user!.id, githubUsername },
+        })
+      );
+    }
+
     updates.push(
       prisma.profile.upsert({
         where: { userId: req.user!.id },
@@ -264,7 +274,13 @@ router.patch("/profile", authenticate, validate(updateProfileSchema), async (req
 
     const results = await prisma.$transaction(updates);
     const user = updates.length > 1 ? results[0] : undefined;
-    const profile = results[results.length - 1];
+    const profile = results.find((r: any) => r && 'handle' in r && 'bio' in r);
+
+    if (githubUsername) {
+      import("../jobs/platformSync.job.js")
+        .then(({ syncStudentProfileByUserId }) => syncStudentProfileByUserId(req.user!.id, "github"))
+        .catch((err) => console.error("Failed to sync github profile on update:", err));
+    }
 
     res.json({ success: true, data: { user, profile } });
   } catch (err) {

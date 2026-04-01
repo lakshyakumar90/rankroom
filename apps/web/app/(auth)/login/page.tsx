@@ -7,6 +7,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { loginSchema } from "@repo/validators";
 import type { z } from "zod";
+import { motion } from "framer-motion";
 import { ArrowRight, ChartNoAxesCombined, Code2, Loader2, ShieldCheck, Sparkles, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
@@ -84,86 +85,107 @@ function LoginPageContent() {
       title="Sign in and pick up exactly where your momentum stopped."
       description="One workspace for coding practice, attendance, grades, contests, and academic operations, now with a cleaner and more cohesive UI system."
       hero={
-        <div className="grid gap-4 sm:grid-cols-3">
-          <FeatureTile
-            icon={ChartNoAxesCombined}
-            title="Progress snapshots"
-            description="See rank, streaks, and subject health without digging through menus."
-          />
-          <FeatureTile
-            icon={ShieldCheck}
-            title="Reliable sessions"
-            description="Fresh tokens are used immediately, so sign-in and sync stay in step."
-          />
-          <FeatureTile
-            icon={Sparkles}
-            title="Calmer workspace"
-            description="Sharper hierarchy, better contrast, and consistent surfaces across the app."
-          />
-        </div>
+        <motion.div 
+          initial="hidden" 
+          animate="show" 
+          variants={{
+            hidden: { opacity: 0 },
+            show: { opacity: 1, transition: { staggerChildren: 0.15, delayChildren: 0.2 } }
+          }}
+          className="grid gap-4 sm:grid-cols-3"
+        >
+          <motion.div variants={{ hidden: { opacity: 0, y: 15 }, show: { opacity: 1, y: 0 } }}>
+            <FeatureTile
+              icon={ChartNoAxesCombined}
+              title="Progress snapshots"
+              description="See rank, streaks, and subject health without digging through menus."
+            />
+          </motion.div>
+          <motion.div variants={{ hidden: { opacity: 0, y: 15 }, show: { opacity: 1, y: 0 } }}>
+            <FeatureTile
+              icon={ShieldCheck}
+              title="Reliable sessions"
+              description="Fresh tokens are used immediately, so sign-in and sync stay in step."
+            />
+          </motion.div>
+          <motion.div variants={{ hidden: { opacity: 0, y: 15 }, show: { opacity: 1, y: 0 } }}>
+            <FeatureTile
+              icon={Sparkles}
+              title="Calmer workspace"
+              description="Sharper hierarchy, better contrast, and consistent surfaces across the app."
+            />
+          </motion.div>
+        </motion.div>
       }
       form={
-        <Card className="rounded-xl border-border/70 bg-card/90 shadow-sm">
-          <CardHeader className="flex flex-col gap-4 p-8 pb-0 sm:p-10 sm:pb-0">
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="flex size-11 items-center justify-center rounded-xl bg-secondary text-secondary-foreground">
-                  <Code2 className="size-5" />
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.96 }} 
+          animate={{ opacity: 1, scale: 1 }} 
+          transition={{ duration: 0.4, ease: "easeOut" }}
+        >
+          <Card className="rounded-xl border-border/70 bg-card/90 shadow-sm backdrop-blur-md">
+            <CardHeader className="flex flex-col gap-4 p-8 pb-0 sm:p-10 sm:pb-0">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary shadow-sm">
+                    <Code2 className="size-5" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-2xl font-bold tracking-tight">Welcome back</CardTitle>
+                    <CardDescription>Use your RankRoom account to continue.</CardDescription>
+                  </div>
                 </div>
-                <div>
-                  <CardTitle className="text-2xl">Welcome back</CardTitle>
-                  <CardDescription>Use your RankRoom account to continue.</CardDescription>
-                </div>
+                <Badge variant="outline" className="rounded-full px-3 py-1 font-medium bg-background">
+                  Secure login
+                </Badge>
               </div>
-              <Badge variant="outline" className="rounded-full px-3 py-1">
-                Secure login
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="p-8 pt-8 sm:p-10 sm:pt-8">
-            <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5">
-              <Field label="Email" htmlFor="email" error={errors.email?.message}>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="you@example.com"
-                  autoComplete="email"
-                  className="h-11 rounded-xl"
-                  {...register("email")}
-                />
-              </Field>
+            </CardHeader>
+            <CardContent className="p-8 pt-8 sm:p-10 sm:pt-8">
+              <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5">
+                <Field label="Email" htmlFor="email" error={errors.email?.message}>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="you@example.com"
+                    autoComplete="email"
+                    className="h-12 rounded-xl bg-background/50"
+                    {...register("email")}
+                  />
+                </Field>
 
-              <Field label="Password" htmlFor="password" error={errors.password?.message}>
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <Label htmlFor="password">Password</Label>
-                  <Link href="/forgot-password" className="text-xs font-medium text-primary">
-                    Forgot password?
-                  </Link>
-                </div>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="••••••••"
-                  autoComplete="current-password"
-                  className="h-11 rounded-xl"
-                  {...register("password")}
-                />
-              </Field>
+                <Field label="Password" htmlFor="password" error={errors.password?.message}>
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <Label htmlFor="password">Password</Label>
+                    <Link href="/forgot-password" className="text-xs font-medium text-primary hover:underline">
+                      Forgot password?
+                    </Link>
+                  </div>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="••••••••"
+                    autoComplete="current-password"
+                    className="h-12 rounded-xl bg-background/50"
+                    {...register("password")}
+                  />
+                </Field>
 
-              <Button type="submit" size="lg" className="mt-2 w-full rounded-xl" disabled={loading}>
-                {loading ? <Loader2 className="size-4 animate-spin" /> : <ArrowRight className="size-4" />}
-                Sign in to RankRoom
-              </Button>
-            </form>
+                <Button type="submit" size="lg" className="mt-4 w-full rounded-xl h-12 shadow-md shadow-primary/20" disabled={loading}>
+                  {loading ? <Loader2 className="size-5 mr-2 animate-spin" /> : null}
+                  {!loading && "Sign in to RankRoom"}
+                  {!loading && <ArrowRight className="size-4 ml-2" />}
+                </Button>
+              </form>
 
-            <div className="mt-6 flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-background/70 px-4 py-3 text-sm text-muted-foreground">
-              <span>New here?</span>
-              <Link href="/register" className="font-medium text-foreground hover:text-primary">
-                Create your account
-              </Link>
-            </div>
-          </CardContent>
-        </Card>
+              <div className="mt-8 flex items-center justify-center gap-3 rounded-xl border border-border/70 bg-muted/40 px-4 py-4 text-sm text-muted-foreground">
+                <span>New here?</span>
+                <Link href="/register" className="font-semibold text-foreground hover:text-primary transition-colors">
+                  Create your account
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
       }
     />
   );

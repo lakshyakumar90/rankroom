@@ -144,16 +144,17 @@ router.post("/:id/run", authenticate, validate(runSchema), async (req, res, next
       where: { id: req.params.id },
       include: {
         testCases: {
-          where: stdin ? undefined : { isSample: true },
+          where: { isSample: true },
           orderBy: { createdAt: "asc" },
-          take: stdin ? undefined : 3,
+          take: 3,
         },
       },
     });
 
     if (!problem || !problem.isPublished) throw new AppError("Problem not found", 404);
 
-    if (stdin !== undefined) {
+    // Custom stdin mode — run against user-provided input only
+    if (stdin !== undefined && stdin !== "") {
       const token = await submitToJudge0(source_code, languageId, stdin);
       const result = await pollResult(token);
       res.json({
@@ -166,6 +167,20 @@ router.post("/:id/run", authenticate, validate(runSchema), async (req, res, next
     }
 
     const sampleCases = problem.testCases.filter((testCase) => testCase.isSample);
+
+    if (sampleCases.length === 0) {
+      // No sample cases — run with empty stdin so the user still gets output
+      const token = await submitToJudge0(source_code, languageId, "");
+      const result = await pollResult(token);
+      res.json({
+        success: true,
+        data: {
+          results: [toTestResult(result, 0, null)],
+        },
+      });
+      return;
+    }
+
     const batchResults = await runBatch(
       source_code,
       languageId,
@@ -178,10 +193,19 @@ router.post("/:id/run", authenticate, validate(runSchema), async (req, res, next
     res.json({
       success: true,
       data: {
-        results: batchResults.map((result, index) => toTestResult(result, index, sampleCases[index]?.expectedOutput ?? null)),
+        results: batchResults.map((result, index) =>
+          toTestResult(result, index, sampleCases[index]?.expectedOutput ?? null)
+        ),
       },
     });
   } catch (err) {
+    // Surface Judge0 connectivity errors as 503, not generic 500/400
+    if (err instanceof Error && err.message.includes("Judge0")) {
+      return res.status(503).json({
+        success: false,
+        error: `Judge0 execution service error: ${err.message}`,
+      });
+    }
     next(err);
   }
 });

@@ -106,6 +106,7 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
   const contestId = searchParams.get("contestId");
   const editorRef = useRef<CodeEditorRef>(null);
   const hydratedCodeKeyRef = useRef<string | null>(null);
+  const initialLanguageHydratedRef = useRef<string | null>(null);
   const [timerStartedAt, setTimerStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [customCases, setCustomCases] = useState<string[]>([""]);
@@ -175,17 +176,21 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
     setActiveBottomTab("testcase");
     setActiveTestCase(0);
     hydratedCodeKeyRef.current = null;
+    initialLanguageHydratedRef.current = null;
   }, [id]);
 
   // Initial hydration from localStorage
   useEffect(() => {
     if (!id) return;
     
-    // 1. Restore language
-    const savedLanguage = window.localStorage.getItem(`rankroom:language:${id}`);
-    if (savedLanguage && savedLanguage !== language) {
-      setLanguage(savedLanguage);
-      return; // Wait for next render with updated language
+    // 1. Restore language ONCE per problem id
+    if (initialLanguageHydratedRef.current !== id) {
+      initialLanguageHydratedRef.current = id;
+      const savedLanguage = window.localStorage.getItem(`rankroom:language:${id}`);
+      if (savedLanguage && savedLanguage !== language) {
+        setLanguage(savedLanguage);
+        return; // Wait for next render with updated language
+      }
     }
 
     // 2. Restore code for this specific ID and language
@@ -203,9 +208,10 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
       hydratedCodeKeyRef.current = codeKey;
       setCode(id, language, getPreferredCode(problem, language));
     }
-  }, [id, language, problem, setCode, setLanguage]); // removed 'code' to avoid typing loop
+  }, [id, language, problem, setCode, setLanguage]);
 
   useEffect(() => {
+    if (!hydratedCodeKeyRef.current) return;
     window.localStorage.setItem(`rankroom:language:${id}`, language);
     const timeout = setTimeout(() => {
       window.localStorage.setItem(`rankroom:code:${id}:${language}`, activeCode);
@@ -540,7 +546,17 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
                         <div><p className="mb-1 text-xs text-muted-foreground">Expected Output</p><pre className="rounded-md bg-muted p-3 text-sm">{activeRunResult.expected ?? ""}</pre></div>
                         <div>
                           <p className="mb-1 text-xs text-muted-foreground">Your Output</p>
-                          {activeRunResult.verdict === "WA" ? <DiffViewer expected={activeRunResult.expected ?? ""} actual={activeRunResult.stdout ?? ""} /> : <pre className={cn("rounded-md p-3 text-sm", activeRunResult.compileOutput ? "border border-red-500/40 bg-red-950/20 text-red-200" : "bg-muted")}>{activeRunResult.stdout ?? activeRunResult.stderr ?? activeRunResult.compileOutput ?? ""}</pre>}
+                          {activeRunResult.verdict === "WA" ? (
+                            <DiffViewer expected={activeRunResult.expected ?? ""} actual={activeRunResult.stdout ?? ""} />
+                          ) : activeRunResult.compileOutput ? (
+                            <div className="space-y-2">
+                              <pre className="rounded-md border border-red-500/40 bg-red-950/20 p-3 text-sm text-red-200 whitespace-pre-wrap">{activeRunResult.compileOutput}</pre>
+                            </div>
+                          ) : activeRunResult.stderr ? (
+                            <pre className="rounded-md border border-orange-500/40 bg-orange-950/20 p-3 text-sm text-orange-200 whitespace-pre-wrap">{activeRunResult.stderr}</pre>
+                          ) : (
+                            <pre className="rounded-md bg-muted p-3 text-sm whitespace-pre-wrap">{activeRunResult.stdout ?? "(no output)"}</pre>
+                          )}
                         </div>
                       </div>
                     </div>
