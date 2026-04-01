@@ -181,19 +181,21 @@ router.post("/:id/run", authenticate, validate(runSchema), async (req, res, next
       return;
     }
 
-    const batchResults = await runBatch(
-      source_code,
-      languageId,
-      sampleCases.map((testCase) => ({
-        input: testCase.input,
-        expected_output: testCase.expectedOutput,
-      }))
+    // Submit each sample case individually in parallel and poll for results.
+    // We avoid batch mode here because some Judge0 setups enforce different
+    // (tighter) limits in batch vs. individual submissions.
+    const tokens = await Promise.all(
+      sampleCases.map((testCase) =>
+        submitToJudge0(source_code, languageId, testCase.input, testCase.expectedOutput)
+      )
     );
+
+    const judgeResults = await Promise.all(tokens.map((token) => pollResult(token)));
 
     res.json({
       success: true,
       data: {
-        results: batchResults.map((result, index) =>
+        results: judgeResults.map((result, index) =>
           toTestResult(result, index, sampleCases[index]?.expectedOutput ?? null)
         ),
       },

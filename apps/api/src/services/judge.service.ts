@@ -1,4 +1,4 @@
-import { JUDGE0_TIMEOUT_MS, JUDGE0_URL, JUDGE0_CPU_TIME_LIMIT, JUDGE0_WALL_TIME_LIMIT, JUDGE0_MEMORY_LIMIT } from "../config/judge0";
+import { JUDGE0_TIMEOUT_MS, JUDGE0_URL } from "../config/judge0";
 import type { TestResult, Verdict } from "@repo/types";
 
 const JUDGE0_API_KEY = process.env["JUDGE0_API_KEY"] ?? "";
@@ -120,9 +120,10 @@ export async function submitToJudge0(
       source_code: encode(source_code),
       language_id,
       stdin: encode(stdin),
-      cpu_time_limit: JUDGE0_CPU_TIME_LIMIT,
-      wall_time_limit: JUDGE0_WALL_TIME_LIMIT,
-      memory_limit: JUDGE0_MEMORY_LIMIT,
+      // Do NOT override cpu_time_limit / wall_time_limit here.
+      // Explicit overrides can conflict with how the local Judge0 Docker sandbox
+      // enforces wall-time, causing false TLEs on fast correct code.
+      // Let Judge0 use its own configured defaults (typically 5s CPU / 10s wall).
       ...(expected_output !== undefined ? { expected_output: encode(expected_output) } : {}),
     }),
   });
@@ -183,9 +184,7 @@ export async function runBatch(
         language_id,
         stdin: encode(testCase.input),
         expected_output: encode(testCase.expected_output),
-        cpu_time_limit: JUDGE0_CPU_TIME_LIMIT,
-        wall_time_limit: JUDGE0_WALL_TIME_LIMIT,
-        memory_limit: JUDGE0_MEMORY_LIMIT,
+        // No explicit time/memory overrides — use Judge0 server defaults.
       })),
     }),
   });
