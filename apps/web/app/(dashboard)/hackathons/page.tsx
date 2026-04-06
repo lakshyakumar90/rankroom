@@ -9,14 +9,9 @@ import { PermissionGate } from "@/components/auth/PermissionGate";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import type { ApiResponse } from "@repo/types";
+import type { ApiResponse, HackathonEligibility } from "@repo/types";
 import { CalendarDays, Trophy, Users, Clock, CheckCircle2, ChevronRight, Check, AlertCircle, Zap } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
-
-interface HackathonEligibility {
-  isEligible: boolean;
-  reason: string;
-}
 
 interface HackathonListItem {
   id: string;
@@ -87,7 +82,7 @@ export default function HackathonsPage() {
       <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
         {isLoading ? (
           Array.from({ length: 6 }).map((_, index) => (
-            <Card key={index} className="h-[400px] animate-pulse rounded-2xl bg-muted/20" />
+            <Card key={index} className="h-100 animate-pulse rounded-2xl bg-muted/20" />
           ))
         ) : hackathons.length === 0 ? (
           <div className="col-span-full py-20 text-center text-muted-foreground border-2 border-dashed border-border/50 rounded-2xl">
@@ -199,10 +194,20 @@ export default function HackathonsPage() {
                             <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
                             <span>{hackathon.eligibility?.reason ?? "Eligibility criteria not met"}</span>
                           </div>
+
+                          <div className="rounded-xl border border-border/70 bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
+                            <p className="font-medium text-foreground">Required to register</p>
+                            <ul className="mt-1 space-y-1">
+                              {buildHackathonCriteriaSummary(hackathon).map((criteria) => (
+                                <li key={criteria} className="truncate">• {criteria}</li>
+                              ))}
+                            </ul>
+                          </div>
+
                           <Button asChild variant="outline" size="sm" className="w-full gap-1.5 text-xs">
-                            <Link href="/skills">
+                            <Link href="/profile/edit">
                               <Zap className="size-3.5" />
-                              Add Required Skills
+                              Update Profile for Eligibility
                             </Link>
                           </Button>
                         </div>
@@ -228,4 +233,30 @@ export default function HackathonsPage() {
       </div>
     </div>
   );
+}
+
+function buildHackathonCriteriaSummary(hackathon: HackathonListItem) {
+  const summary: string[] = [];
+
+  if (hackathon.minSkills.length > 0) {
+    summary.push(`Any one skill from: ${hackathon.minSkills.join(", ")}`);
+  }
+
+  if (hackathon.minProjects > 0) {
+    summary.push(`${hackathon.minProjects}+ projects in your profile`);
+  }
+
+  if (hackathon.minLeetcode > 0) {
+    summary.push(`${hackathon.minLeetcode}+ LeetCode solved`);
+  }
+
+  if (hackathon.minCgpa !== null && hackathon.minCgpa !== undefined) {
+    summary.push(`CGPA ${hackathon.minCgpa.toFixed(2)} or higher`);
+  }
+
+  if (summary.length === 0) {
+    summary.push("No special profile thresholds for this event");
+  }
+
+  return summary;
 }

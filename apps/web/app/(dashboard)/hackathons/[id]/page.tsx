@@ -157,8 +157,8 @@ export default function HackathonDetailPage() {
   const isPending = regState?.status === "PENDING";
   const canRegister = regState?.status === "NOT_REGISTERED" && (regState.canRegister ?? true);
 
-  const unmetItems = hackathon
-    ? buildUnmetEligibilityItems(hackathon)
+  const eligibilityChecklist = hackathon
+    ? buildEligibilityChecklist(hackathon, user?.scope.departmentIds ?? [])
     : [];
 
   useEffect(() => {
@@ -300,39 +300,70 @@ export default function HackathonDetailPage() {
                       </div>
                     </div>
 
-                    {unmetItems.length > 0 ? (
-                      <div className="rounded-lg border border-border/70 bg-muted/30 px-3 py-2.5">
-                        <p className="text-xs font-medium text-foreground">What to fix in your profile</p>
-                        <div className="mt-2 space-y-2">
-                          {unmetItems.map((item) => (
-                            <div key={item.label} className="rounded-md border border-border/60 bg-background/70 px-2.5 py-2 text-xs">
+                    <div className="rounded-lg border border-border/70 bg-muted/30 px-3 py-2.5">
+                      <p className="text-xs font-medium text-foreground">Eligibility criteria</p>
+                      <div className="mt-2 space-y-2">
+                        {eligibilityChecklist.map((item) => (
+                          <div key={item.label} className="rounded-md border border-border/60 bg-background/70 px-2.5 py-2 text-xs">
+                            <div className="flex items-center justify-between gap-2">
                               <p className="font-medium text-foreground">{item.label}</p>
-                              <p className="mt-1 text-muted-foreground">Required: {item.required}</p>
-                              <p className="text-muted-foreground">Current: {item.current}</p>
+                              <Badge
+                                variant="outline"
+                                className={
+                                  item.status === "met"
+                                    ? "border-emerald-500/40 text-emerald-600"
+                                    : item.status === "unmet"
+                                      ? "border-rose-500/40 text-rose-600"
+                                      : "border-amber-500/40 text-amber-600"
+                                }
+                              >
+                                {item.status === "met" ? "Met" : item.status === "unmet" ? "Not met" : "Review"}
+                              </Badge>
                             </div>
-                          ))}
-                        </div>
+                            <p className="mt-1 text-muted-foreground">Required: {item.required}</p>
+                            <p className="text-muted-foreground">Current: {item.current}</p>
+                          </div>
+                        ))}
+                      </div>
 
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        <Button asChild variant="outline" size="sm" className="gap-2">
+                          <Link href="/profile/edit">
+                            <Zap className="size-3.5" />
+                            Update Profile
+                          </Link>
+                        </Button>
+                        {hackathon.minSkills.length ? (
                           <Button asChild variant="outline" size="sm" className="gap-2">
-                            <Link href="/profile/edit">
+                            <Link href="/skills">
                               <Zap className="size-3.5" />
-                              Update Profile
+                              Add Skills
                             </Link>
                           </Button>
-                          {hackathon.eligibility?.missingSkills?.length ? (
-                            <Button asChild variant="outline" size="sm" className="gap-2">
-                              <Link href="/skills">
-                                <Zap className="size-3.5" />
-                                Add Skills
-                              </Link>
-                            </Button>
-                          ) : null}
-                        </div>
+                        ) : null}
                       </div>
-                    ) : null}
+                    </div>
                   </div>
                 )}
+
+                {hackathon.eligibility?.isEligible ? (
+                  <div className="rounded-lg border border-border/70 bg-muted/30 px-3 py-2.5">
+                    <p className="text-xs font-medium text-foreground">Eligibility criteria</p>
+                    <div className="mt-2 space-y-2">
+                      {eligibilityChecklist.map((item) => (
+                        <div key={item.label} className="rounded-md border border-border/60 bg-background/70 px-2.5 py-2 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="font-medium text-foreground">{item.label}</p>
+                            <Badge variant="outline" className="border-emerald-500/40 text-emerald-600">Met</Badge>
+                          </div>
+                          <p className="mt-1 text-muted-foreground">Required: {item.required}</p>
+                          <p className="text-muted-foreground">Current: {item.current}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
                 {isRegistered ? (
                   <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-600">
                     <CheckCircle2 className="size-4" />
@@ -506,49 +537,107 @@ export default function HackathonDetailPage() {
   );
 }
 
-              function buildUnmetEligibilityItems(hackathon: HackathonDetail) {
-                const eligibility = hackathon.eligibility;
+type EligibilityChecklistItem = {
+  label: string;
+  required: string;
+  current: string;
+  status: "met" | "unmet" | "unknown";
+};
 
-                if (!eligibility || eligibility.isEligible) {
-                  return [];
-                }
+function buildEligibilityChecklist(hackathon: HackathonDetail, userDepartmentIds: string[]) {
+  const eligibility = hackathon.eligibility;
+  const items: EligibilityChecklistItem[] = [];
 
-                const items: Array<{ label: string; required: string; current: string }> = [];
+  if (hackathon.minSkills.length > 0) {
+    const missingSkills = eligibility?.missingSkills;
+    const status = missingSkills === undefined
+      ? "unknown"
+      : missingSkills.length === 0
+        ? "met"
+        : "unmet";
 
-                if (hackathon.minSkills.length > 0 && eligibility.missingSkills?.length) {
-                  items.push({
-                    label: "Skills",
-                    required: `Any one of: ${hackathon.minSkills.join(", ")}`,
-                    current: `Missing: ${eligibility.missingSkills.join(", ")}`,
-                  });
-                }
+    items.push({
+      label: "Skills",
+      required: `Any one of: ${hackathon.minSkills.join(", ")}`,
+      current: missingSkills === undefined
+        ? "Update your skills in profile"
+        : missingSkills.length === 0
+          ? "You already match required skills"
+          : `Missing: ${missingSkills.join(", ")}`,
+      status,
+    });
+  }
 
-                if (eligibility.currentProjects !== undefined && eligibility.currentProjects < hackathon.minProjects) {
-                  items.push({
-                    label: "Projects",
-                    required: `${hackathon.minProjects}+ projects`,
-                    current: `${eligibility.currentProjects}`,
-                  });
-                }
+  if (hackathon.minProjects > 0) {
+    const currentProjects = eligibility?.currentProjects;
+    const status = currentProjects === undefined
+      ? "unknown"
+      : currentProjects >= hackathon.minProjects
+        ? "met"
+        : "unmet";
 
-                if (eligibility.currentLeetcode !== undefined && eligibility.currentLeetcode < hackathon.minLeetcode) {
-                  items.push({
-                    label: "LeetCode solved",
-                    required: `${hackathon.minLeetcode}+ solved problems`,
-                    current: `${eligibility.currentLeetcode}`,
-                  });
-                }
+    items.push({
+      label: "Projects",
+      required: `${hackathon.minProjects}+ projects`,
+      current: currentProjects === undefined ? "Not available" : `${currentProjects}`,
+      status,
+    });
+  }
 
-                if (hackathon.minCgpa !== null && hackathon.minCgpa !== undefined) {
-                  const currentCgpa = eligibility.currentCgpa;
-                  if (currentCgpa === null || currentCgpa === undefined || currentCgpa < hackathon.minCgpa) {
-                    items.push({
-                      label: "CGPA",
-                      required: `${hackathon.minCgpa.toFixed(2)}+`,
-                      current: currentCgpa === null || currentCgpa === undefined ? "Not set" : currentCgpa.toFixed(2),
-                    });
-                  }
-                }
+  if (hackathon.minLeetcode > 0) {
+    const currentLeetcode = eligibility?.currentLeetcode;
+    const status = currentLeetcode === undefined
+      ? "unknown"
+      : currentLeetcode >= hackathon.minLeetcode
+        ? "met"
+        : "unmet";
 
-                return items;
-              }
+    items.push({
+      label: "LeetCode solved",
+      required: `${hackathon.minLeetcode}+ solved problems`,
+      current: currentLeetcode === undefined ? "Not available" : `${currentLeetcode}`,
+      status,
+    });
+  }
+
+  if (hackathon.minCgpa !== null && hackathon.minCgpa !== undefined) {
+    const currentCgpa = eligibility?.currentCgpa;
+    const status = currentCgpa === undefined
+      ? "unknown"
+      : (currentCgpa ?? 0) >= hackathon.minCgpa
+        ? "met"
+        : "unmet";
+
+    items.push({
+      label: "CGPA",
+      required: `${hackathon.minCgpa.toFixed(2)}+`,
+      current: currentCgpa === undefined
+        ? "Not available"
+        : currentCgpa === null
+          ? "Not set"
+          : currentCgpa.toFixed(2),
+      status,
+    });
+  }
+
+  if (hackathon.department?.id) {
+    const inDepartment = userDepartmentIds.includes(hackathon.department.id);
+    items.push({
+      label: "Department",
+      required: hackathon.department.name,
+      current: inDepartment ? "You belong to this department" : "Different department",
+      status: inDepartment ? "met" : "unmet",
+    });
+  }
+
+  if (items.length === 0) {
+    items.push({
+      label: "General eligibility",
+      required: "No special profile requirements",
+      current: "Open to all eligible students",
+      status: "met",
+    });
+  }
+
+  return items;
+}
