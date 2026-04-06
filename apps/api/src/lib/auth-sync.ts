@@ -25,23 +25,35 @@ function extractName(user: SupabaseUser) {
 }
 
 export async function syncSupabaseUserToDatabase(user: SupabaseUser) {
-  const existing = await prisma.user.findUnique({
+  const name = extractName(user);
+  const role = normalizeRole(user.user_metadata?.["role"]);
+  const emailFromToken = user.email;
+
+  const existingBySupabase = await prisma.user.findUnique({
     where: { supabaseId: user.id },
     include: { profile: true, studentProfile: true, leaderboard: true },
   });
 
-  const name = extractName(user);
-  const role = normalizeRole(user.user_metadata?.["role"]);
-  const email = user.email ?? existing?.email;
+  const email = emailFromToken ?? existingBySupabase?.email;
 
   if (!email) {
     throw new Error("Supabase user email is missing");
   }
 
+  // Same email can exist under a new Supabase user id (re-signup, provider switch, etc.).
+  // Resolve by email so we update/link instead of prisma.user.create → P2002 on email.
+  const existing =
+    existingBySupabase ??
+    (await prisma.user.findUnique({
+      where: { email },
+      include: { profile: true, studentProfile: true, leaderboard: true },
+    }));
+
   if (existing) {
     return prisma.user.update({
       where: { id: existing.id },
       data: {
+        supabaseId: user.id,
         email,
         name,
         isVerified: !!user.email_confirmed_at,

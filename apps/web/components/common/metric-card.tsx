@@ -26,16 +26,16 @@ export function MetricCard({
   };
 
   return (
-    <Card className="rounded-xl border-border/70 bg-card/88 shadow-sm">
-      <CardContent className="flex items-start justify-between gap-4 p-5">
-        <div className="flex flex-col gap-2">
+    <Card className="rounded-2xl border-border/70 bg-card/90 shadow-sm">
+      <CardContent className="flex min-w-0 items-start justify-between gap-4 p-5">
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
           <p className="text-sm font-medium text-muted-foreground">{title}</p>
           {loading ? (
             <Skeleton className="h-9 w-28 rounded-lg" />
           ) : (
-            <p className="text-2xl font-semibold tracking-tight">{value ?? "—"}</p>
+            <p className="wrap-break-word text-[clamp(1.3rem,2.1vw,1.75rem)] font-semibold leading-tight tracking-tight">{value ?? "—"}</p>
           )}
-          {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
+          {description ? <p className="wrap-break-word text-sm text-muted-foreground">{description}</p> : null}
         </div>
         <div
           className={cn(

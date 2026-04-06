@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { ApiResponse } from "@repo/types";
-import { CalendarDays, Trophy, Users, Clock, CheckCircle2, ChevronRight, Check } from "lucide-react";
+import { CalendarDays, Trophy, Users, Clock, CheckCircle2, ChevronRight, Check, AlertCircle, Zap } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
 
 interface HackathonEligibility {
@@ -188,24 +188,25 @@ export default function HackathonsPage() {
                   {/* Footer / Eligibility */}
                   <div className="mt-auto space-y-3 pt-2">
                     {user?.role === "STUDENT" ? (
-                      <div
-                        className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-xs font-medium ${
-                          hackathon.eligibility?.isEligible
-                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:border-emerald-500/20 dark:text-emerald-300"
-                            : "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:border-rose-500/20 dark:text-rose-300"
-                        }`}
-                      >
-                        {hackathon.eligibility?.isEligible ? (
+                      hackathon.eligibility?.isEligible ? (
+                        <div className="flex items-start gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
                           <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" />
-                        ) : (
-                          <Clock className="mt-0.5 size-3.5 shrink-0" />
-                        )}
-                        <span>
-                          {hackathon.eligibility?.isEligible
-                            ? "You meet all eligibility requirements"
-                            : hackathon.eligibility?.reason ?? "Eligibility criteria not met"}
-                        </span>
-                      </div>
+                          <span>You meet all eligibility requirements</span>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="flex items-start gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-700 dark:text-rose-300">
+                            <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+                            <span>{hackathon.eligibility?.reason ?? "Eligibility criteria not met"}</span>
+                          </div>
+                          <Button asChild variant="outline" size="sm" className="w-full gap-1.5 text-xs">
+                            <Link href="/skills">
+                              <Zap className="size-3.5" />
+                              Add Required Skills
+                            </Link>
+                          </Button>
+                        </div>
+                      )
                     ) : (
                       <div className="flex items-center gap-2 rounded-xl border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                         <Users className="size-3.5" />

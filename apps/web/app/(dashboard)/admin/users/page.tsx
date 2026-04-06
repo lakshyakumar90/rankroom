@@ -32,6 +32,13 @@ interface UserRecord {
     isPublic: boolean;
   } | null;
   departmentHeaded?: { id: string; name: string; code: string } | null;
+  teachingAssignments?: Array<{
+    subject: {
+      id: string;
+      name: string;
+      code: string;
+    };
+  }>;
   enrollments?: Array<{
     sectionId: string;
     section: {
@@ -58,6 +65,12 @@ interface DepartmentOption {
   code: string;
 }
 
+interface SubjectOption {
+  id: string;
+  name: string;
+  code: string;
+}
+
 export default function AdminUsersPage() {
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
@@ -69,6 +82,8 @@ export default function AdminUsersPage() {
     password: "",
     role: Role.STUDENT,
     departmentId: "",
+    sectionId: "",
+    subjectIds: [] as string[],
   });
   const queryClient = useQueryClient();
 
@@ -92,6 +107,12 @@ export default function AdminUsersPage() {
     queryFn: () => api.get<ApiResponse<DepartmentOption[]>>("/api/admin/departments"),
   });
 
+  const { data: createSubjectsData } = useQuery({
+    queryKey: ["admin-subject-options", createForm.sectionId],
+    queryFn: () => api.get<ApiResponse<SubjectOption[]>>(`/api/admin/classes/${createForm.sectionId}/subjects`),
+    enabled: !!createForm.sectionId && [Role.TEACHER, Role.CLASS_COORDINATOR].includes(createForm.role),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/api/admin/users/${id}`),
     onSuccess: () => {
@@ -105,7 +126,7 @@ export default function AdminUsersPage() {
     mutationFn: () => api.post("/api/admin/users", createForm),
     onSuccess: () => {
       toast.success("User created");
-      setCreateForm({ name: "", email: "", password: "", role: Role.STUDENT, departmentId: "" });
+      setCreateForm({ name: "", email: "", password: "", role: Role.STUDENT, departmentId: "", sectionId: "", subjectIds: [] });
       setShowCreate(false);
       void queryClient.invalidateQueries({ queryKey: ["admin-users"] });
     },
@@ -115,6 +136,7 @@ export default function AdminUsersPage() {
   const users = data?.data ?? [];
   const sections = sectionsData?.data ?? [];
   const departments = departmentsData?.data ?? [];
+  const createSubjects = createSubjectsData?.data ?? [];
 
   return (
     <div className="space-y-6">
@@ -156,7 +178,15 @@ export default function AdminUsersPage() {
               <select
                 className="h-9 border border-input bg-background px-3 text-sm"
                 value={createForm.role}
-                onChange={(event) => setCreateForm((current) => ({ ...current, role: event.target.value as Role }))}
+                onChange={(event) =>
+                  setCreateForm((current) => ({
+                    ...current,
+                    role: event.target.value as Role,
+                    departmentId: "",
+                    sectionId: "",
+                    subjectIds: [],
+                  }))
+                }
               >
                 {Object.values(Role).map((role) => (
                   <option key={role} value={role}>
@@ -164,6 +194,22 @@ export default function AdminUsersPage() {
                   </option>
                 ))}
               </select>
+              {createForm.role === Role.STUDENT || createForm.role === Role.TEACHER || createForm.role === Role.CLASS_COORDINATOR ? (
+                <select
+                  className="h-9 border border-input bg-background px-3 text-sm"
+                  value={createForm.sectionId}
+                  onChange={(event) =>
+                    setCreateForm((current) => ({ ...current, sectionId: event.target.value, subjectIds: [] }))
+                  }
+                >
+                  <option value="">Select section</option>
+                  {sections.map((section) => (
+                    <option key={section.id} value={section.id}>
+                      {section.name} · {section.department.code} · {section.academicYear}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
               {createForm.role === Role.DEPARTMENT_HEAD ? (
                 <select
                   className="h-9 border border-input bg-background px-3 text-sm sm:col-span-2"
@@ -178,6 +224,34 @@ export default function AdminUsersPage() {
                   ))}
                 </select>
               ) : null}
+              {(createForm.role === Role.TEACHER || createForm.role === Role.CLASS_COORDINATOR) && createForm.sectionId ? (
+                <div className="space-y-2 sm:col-span-2">
+                  <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">Subjects</p>
+                  <div className="grid gap-2 rounded-xl border border-border p-3 sm:grid-cols-2">
+                    {createSubjects.length > 0 ? (
+                      createSubjects.map((subject) => (
+                        <label key={subject.id} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={createForm.subjectIds.includes(subject.id)}
+                            onChange={(event) =>
+                              setCreateForm((current) => ({
+                                ...current,
+                                subjectIds: event.target.checked
+                                  ? [...current.subjectIds, subject.id]
+                                  : current.subjectIds.filter((id) => id !== subject.id),
+                              }))
+                            }
+                          />
+                          <span>{subject.code} · {subject.name}</span>
+                        </label>
+                      ))
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No subjects available in this section yet.</p>
+                    )}
+                  </div>
+                </div>
+              ) : null}
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setShowCreate(false)}>
@@ -190,6 +264,7 @@ export default function AdminUsersPage() {
                   !createForm.email ||
                   !createForm.password ||
                   (createForm.role === Role.DEPARTMENT_HEAD && !createForm.departmentId) ||
+                  ([Role.STUDENT, Role.TEACHER, Role.CLASS_COORDINATOR].includes(createForm.role) && !createForm.sectionId) ||
                   createMutation.isPending
                 }
               >
@@ -317,7 +392,16 @@ function ManageUserPanel({
     isPublic: user.profile?.isPublic ?? false,
     sectionId: user.enrollments?.[0]?.sectionId ?? "",
     departmentId: user.departmentHeaded?.id ?? "",
+    subjectIds: user.teachingAssignments?.map((assignment) => assignment.subject.id) ?? [],
   });
+
+  const { data: subjectsData } = useQuery({
+    queryKey: ["admin-user-subject-options", form.sectionId],
+    queryFn: () => api.get<ApiResponse<SubjectOption[]>>(`/api/admin/classes/${form.sectionId}/subjects`),
+    enabled: !!form.sectionId && [Role.TEACHER, Role.CLASS_COORDINATOR].includes(user.role),
+  });
+
+  const availableSubjects = subjectsData?.data ?? [];
 
   const updateMutation = useMutation({
     mutationFn: () => api.patch(`/api/admin/users/${user.id}`, form),
@@ -378,6 +462,48 @@ function ManageUserPanel({
                 </option>
               ))}
             </select>
+          ) : null}
+          {(user.role === Role.TEACHER || user.role === Role.CLASS_COORDINATOR) ? (
+            <>
+              <select
+                className="h-9 border border-input bg-background px-3 text-sm sm:col-span-2"
+                value={form.sectionId}
+                onChange={(event) => setForm((current) => ({ ...current, sectionId: event.target.value, subjectIds: [] }))}
+              >
+                <option value="">Select teaching section</option>
+                {sections.map((section) => (
+                  <option key={section.id} value={section.id}>
+                    {section.name} · {section.department.code} · {section.academicYear}
+                  </option>
+                ))}
+              </select>
+              <div className="space-y-2 sm:col-span-2">
+                <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">Assigned subjects</p>
+                <div className="grid gap-2 rounded-xl border border-border p-3 sm:grid-cols-2">
+                  {availableSubjects.length > 0 ? (
+                    availableSubjects.map((subject) => (
+                      <label key={subject.id} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={form.subjectIds.includes(subject.id)}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              subjectIds: event.target.checked
+                                ? [...current.subjectIds, subject.id]
+                                : current.subjectIds.filter((id) => id !== subject.id),
+                            }))
+                          }
+                        />
+                        <span>{subject.code} · {subject.name}</span>
+                      </label>
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Choose a section to assign subjects.</p>
+                  )}
+                </div>
+              </div>
+            </>
           ) : null}
           <label className="flex items-center gap-2 text-sm sm:col-span-2">
             <input

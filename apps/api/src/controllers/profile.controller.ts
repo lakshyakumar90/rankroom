@@ -33,6 +33,28 @@ export async function uploadResumeController(req: Request, res: Response, next: 
   }
 }
 
+export async function uploadAvatarController(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!req.file) {
+      res.status(400).json({ success: false, error: "Avatar file is required" });
+      return;
+    }
+    const data = await studentProfileService.uploadAvatar(req.user!.id, req.file);
+    res.status(201).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function deleteAvatarController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const data = await studentProfileService.deleteAvatar(req.user!.id);
+    res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function deleteResumeController(req: Request, res: Response, next: NextFunction) {
   try {
     const data = await studentProfileService.deleteResume(req.user!.id);

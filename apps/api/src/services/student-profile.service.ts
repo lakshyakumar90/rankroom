@@ -2,6 +2,8 @@ import { prisma } from "@repo/database";
 import { Role, type JWTPayload } from "@repo/types";
 import { AppError } from "../middleware/error";
 import { supabase } from "../lib/supabase";
+import { syncStudentProfileCgpa } from "./cgpa.service";
+import { computeStreakFromHeatmap } from "./streak.service";
 
 const publicUserSelect = {
   id: true,
@@ -55,6 +57,18 @@ export async function getStudentProfile(viewer: JWTPayload | undefined, userId: 
         },
       },
       leaderboard: true,
+      certificatesEarned: {
+        where: { status: "APPROVED" },
+        select: {
+          id: true,
+          title: true,
+          type: true,
+          issuedAt: true,
+          externalUrl: true,
+          verificationCode: true,
+        },
+        orderBy: { issuedAt: "desc" },
+      },
       enrollments: {
         select: {
           section: {
@@ -83,7 +97,7 @@ export async function getStudentProfile(viewer: JWTPayload | undefined, userId: 
   }
 
   if (allowedPrivate) {
-    return { ...user, studentProfile };
+    return { ...user, studentProfile, certificates: user.certificatesEarned };
   }
 
   return {
@@ -95,8 +109,10 @@ export async function getStudentProfile(viewer: JWTPayload | undefined, userId: 
     createdAt: user.createdAt,
     profile: {
       handle: user.profile?.handle ?? null,
+      phoneNumber: allowedPrivate ? user.profile?.phoneNumber ?? null : null,
       isPublic: isPublic,
     },
+    certificates: user.certificatesEarned,
     studentProfile: {
       ...studentProfile,
       resumeUrl: isPublic ? studentProfile.resumeUrl : null,
@@ -114,6 +130,12 @@ export async function getStudentProfile(viewer: JWTPayload | undefined, userId: 
 export async function updateOwnStudentProfile(user: JWTPayload, data: Record<string, unknown>) {
   const profile = await ensureStudentProfile(user.id);
   const nextGithub = typeof data.githubUsername === "string" ? data.githubUsername : undefined;
+  const cgpaUpdate =
+    user.role === Role.STUDENT
+      ? { cgpa: await syncStudentProfileCgpa(user.id) }
+      : data.cgpa !== undefined
+      ? { cgpa: data.cgpa as number | null }
+      : {};
 
   if (nextGithub !== undefined) {
     await prisma.user.update({
@@ -131,7 +153,7 @@ export async function updateOwnStudentProfile(user: JWTPayload, data: Record<str
       ...(data.codechefUsername !== undefined ? { codechefUsername: data.codechefUsername as string | null } : {}),
       ...(data.codeforcesUsername !== undefined ? { codeforcesUsername: data.codeforcesUsername as string | null } : {}),
       ...(data.hackerrankUsername !== undefined ? { hackerrankUsername: data.hackerrankUsername as string | null } : {}),
-      ...(data.cgpa !== undefined ? { cgpa: data.cgpa as number | null } : {}),
+      ...cgpaUpdate,
       ...(data.isPublic !== undefined ? { isPublic: data.isPublic as boolean } : {}),
     },
     include: {
@@ -139,6 +161,54 @@ export async function updateOwnStudentProfile(user: JWTPayload, data: Record<str
       projects: true,
       achievements: true,
     },
+  });
+}
+
+export async function updateBasicProfile(userId: string, data: {
+  name?: string;
+  bio?: string;
+  handle?: string;
+  githubUsername?: string;
+  isPublic?: boolean;
+  phoneNumber?: string;
+}) {
+  await Promise.all([
+    data.name !== undefined || data.githubUsername !== undefined
+      ? prisma.user.update({
+          where: { id: userId },
+          data: {
+            ...(data.name !== undefined ? { name: data.name } : {}),
+            ...(data.githubUsername !== undefined ? { githubUsername: data.githubUsername } : {}),
+          },
+        })
+      : null,
+    data.bio !== undefined ||
+    data.handle !== undefined ||
+    data.isPublic !== undefined ||
+    data.phoneNumber !== undefined
+      ? prisma.profile.upsert({
+          where: { userId },
+          update: {
+            ...(data.bio !== undefined ? { bio: data.bio } : {}),
+            ...(data.handle !== undefined ? { handle: data.handle } : {}),
+            ...(data.isPublic !== undefined ? { isPublic: data.isPublic } : {}),
+            ...(data.phoneNumber !== undefined ? { phoneNumber: data.phoneNumber || null } : {}),
+          },
+          create: {
+            userId,
+            bio: data.bio,
+            handle: data.handle,
+            isPublic: data.isPublic ?? false,
+            phoneNumber: data.phoneNumber || null,
+            skills: [],
+          },
+        })
+      : null,
+  ]);
+
+  return prisma.user.findUnique({
+    where: { id: userId },
+    include: { profile: true, studentProfile: true },
   });
 }
 
@@ -164,6 +234,50 @@ export async function uploadResume(userId: string, file: Express.Multer.File) {
       resumeUrl: data.publicUrl,
       resumeFilename: file.originalname,
     },
+  });
+}
+
+export async function uploadAvatar(userId: string, file: Express.Multer.File) {
+  const profile = await ensureStudentProfile(userId);
+  const filePath = `avatars/${userId}/${Date.now()}_${file.originalname}`;
+  const bucket = "avatars";
+
+  const { error } = await supabase.storage.from(bucket).upload(filePath, file.buffer, {
+    contentType: file.mimetype,
+    upsert: true,
+  });
+
+  if (error) {
+    throw new AppError("Avatar upload failed", 500);
+  }
+
+  const { data } = supabase.storage.from(bucket).getPublicUrl(filePath);
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { avatar: data.publicUrl },
+  });
+
+  return prisma.studentProfile.update({
+    where: { id: profile.id },
+    data: { avatarPath: filePath },
+  });
+}
+
+export async function deleteAvatar(userId: string) {
+  const profile = await ensureStudentProfile(userId);
+  if (profile.avatarPath) {
+    await supabase.storage.from("avatars").remove([profile.avatarPath]).catch(() => undefined);
+  }
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { avatar: null },
+  });
+
+  return prisma.studentProfile.update({
+    where: { id: profile.id },
+    data: { avatarPath: null },
   });
 }
 
@@ -307,9 +421,80 @@ export async function markProfileSynced(userId: string) {
   });
 }
 
+export async function refreshProfileStreak(userId: string) {
+  const profile = await ensureStudentProfile(userId);
+  const heatmap = ((profile.activityHeatmap as Record<string, number> | null) ?? {});
+  const streak = computeStreakFromHeatmap(heatmap);
+
+  const [studentProfile, publicProfile] = await prisma.$transaction([
+    prisma.studentProfile.update({
+      where: { id: profile.id },
+      data: {
+        currentStreak: streak.currentStreak,
+        longestStreak: streak.longestStreak,
+        lastActiveDate: streak.lastActiveDate,
+      },
+    }),
+    prisma.profile.upsert({
+      where: { userId },
+      update: { streak: streak.currentStreak },
+      create: { userId, streak: streak.currentStreak, skills: [] },
+    }),
+  ]);
+
+  return { studentProfile, publicProfile };
+}
+
+export async function assertStudentParticipationReadiness(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { profile: true },
+  });
+
+  if (!user) {
+    throw new AppError("User not found", 404);
+  }
+
+  if (user.role !== Role.STUDENT) {
+    throw new AppError("Only students can register", 403);
+  }
+
+  if (!user.profile?.phoneNumber?.trim()) {
+    throw new AppError("Add your phone number in profile settings before registering", 400);
+  }
+
+  if (!user.avatar) {
+    throw new AppError("Upload your avatar in profile settings before registering", 400);
+  }
+
+  return {
+    phoneNumber: user.profile.phoneNumber,
+    avatar: user.avatar,
+    email: user.email,
+    name: user.name,
+  };
+}
+
 export async function getHeatmap(userId: string, year?: number) {
   const profile = await ensureStudentProfile(userId);
-  const heatmap = (profile.activityHeatmap as Record<string, number>) ?? {};
+  let heatmap = (profile.activityHeatmap as Record<string, number>) ?? {};
+
+  // If activityHeatmap is empty (not synced yet), fall back to building from submissions
+  if (Object.keys(heatmap).length === 0) {
+    const yearStart = year ? new Date(`${year}-01-01T00:00:00.000Z`) : new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
+    const submissions = await prisma.submission.findMany({
+      where: { userId, createdAt: { gte: yearStart } },
+      select: { createdAt: true },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const fallback: Record<string, number> = {};
+    for (const sub of submissions) {
+      const day = sub.createdAt.toISOString().split("T")[0]!;
+      fallback[day] = (fallback[day] ?? 0) + 1;
+    }
+    heatmap = fallback;
+  }
 
   if (!year) {
     return heatmap;

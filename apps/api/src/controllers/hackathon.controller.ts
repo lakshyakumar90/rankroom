@@ -103,3 +103,12 @@ export async function hackathonEligibilityController(req: Request, res: Response
     next(error);
   }
 }
+
+export async function upsertHackathonWinnersController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const data = await hackathonService.upsertHackathonWinners(req.user!, req.params.id, req.body.winners ?? []);
+    res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+}

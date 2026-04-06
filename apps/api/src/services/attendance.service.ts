@@ -1,5 +1,71 @@
 import { prisma } from "@repo/database";
 import { AppError } from "../middleware/error";
+import { emitNotificationToUser } from "../lib/socket";
+import { NotificationType } from "@repo/types";
+
+const ATTENDANCE_WARNING_THRESHOLD = 75;
+
+/**
+ * After saving attendance, check each student's percentage for the subject.
+ * If it drops below 75%, create an ATTENDANCE_LOW notification.
+ */
+async function checkAndNotifyLowAttendance(
+  sectionId: string,
+  subjectId: string,
+  studentIds: string[]
+): Promise<void> {
+  await Promise.all(
+    studentIds.map(async (studentId) => {
+      const records = await prisma.attendanceRecord.findMany({
+        where: {
+          studentId,
+          attendanceSession: { sectionId, subjectId },
+        },
+        select: { status: true },
+      });
+
+      if (records.length === 0) return;
+
+      const attended = records.filter((r) => r.status !== "ABSENT").length;
+      const percentage = Math.round((attended / records.length) * 100);
+
+      if (percentage < ATTENDANCE_WARNING_THRESHOLD) {
+        const subject = await prisma.subject.findUnique({
+          where: { id: subjectId },
+          select: { name: true },
+        });
+
+        const notification = await prisma.notification.create({
+          data: {
+            userId: studentId,
+            type: "ATTENDANCE_LOW",
+            title: "Low Attendance Warning",
+            message: `Your attendance in ${subject?.name ?? "a subject"} has dropped to ${percentage}%. Minimum required is ${ATTENDANCE_WARNING_THRESHOLD}%.`,
+            link: "/attendance",
+            entityId: subjectId,
+            entityType: "SUBJECT",
+          },
+        });
+
+        emitNotificationToUser(studentId, {
+          id: notification.id,
+          userId: notification.userId,
+          type: notification.type as NotificationType,
+          title: notification.title,
+          message: notification.message,
+          isRead: notification.isRead,
+          link: notification.link,
+          entityId: notification.entityId,
+          entityType: notification.entityType,
+          targetRole: null,
+          targetSectionId: null,
+          targetDepartmentId: null,
+          createdAt: notification.createdAt.toISOString(),
+        });
+      }
+    })
+  );
+}
 
 export async function createOrUpdateAttendanceSession(
   sessionId: string | null,
@@ -65,6 +131,14 @@ export async function createOrUpdateAttendanceSession(
     }),
   ]);
 
+  const absentStudentIds = payload.records
+    .filter((r) => r.status === "ABSENT")
+    .map((r) => r.studentId);
+
+  if (absentStudentIds.length > 0) {
+    await checkAndNotifyLowAttendance(payload.sectionId, payload.subjectId, absentStudentIds);
+  }
+
   return prisma.attendanceSession.findUnique({
     where: { id: session.id },
     include: {
@@ -83,6 +157,43 @@ export async function createOrUpdateAttendanceSession(
       },
     },
   });
+}
+
+/**
+ * Get attendance percentage for a student in a specific subject.
+ */
+export async function getStudentSubjectAttendance(
+  studentId: string,
+  subjectId: string
+): Promise<{ percentage: number; present: number; total: number }> {
+  const records = await prisma.attendanceRecord.findMany({
+    where: { studentId, attendanceSession: { subjectId } },
+    select: { status: true },
+  });
+
+  const total = records.length;
+  const present = records.filter((r) => r.status !== "ABSENT").length;
+  const percentage = total === 0 ? 0 : Math.round((present / total) * 100);
+
+  return { percentage, present, total };
+}
+
+/**
+ * Get overall attendance percentage across all subjects for a student.
+ */
+export async function getStudentOverallAttendance(
+  studentId: string
+): Promise<{ percentage: number; present: number; total: number }> {
+  const records = await prisma.attendanceRecord.findMany({
+    where: { studentId },
+    select: { status: true },
+  });
+
+  const total = records.length;
+  const present = records.filter((r) => r.status !== "ABSENT").length;
+  const percentage = total === 0 ? 0 : Math.round((present / total) * 100);
+
+  return { percentage, present, total };
 }
 
 export async function getAttendanceSession(sessionId: string) {

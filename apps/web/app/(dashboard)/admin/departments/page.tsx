@@ -2,12 +2,13 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Role, type ApiResponse } from "@repo/types";
-import { Building2, Users, School, Plus } from "lucide-react";
+import { type ApiResponse } from "@repo/types";
+import { Building2, Users, School, Plus, ArrowRight } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -122,7 +123,7 @@ export default function AdminDepartmentsPage() {
           </div>
         ) : (
           departments.map((dept) => (
-            <Card key={dept.id} className="hover:border-primary/30 transition-colors">
+            <Card key={dept.id} className="hover:border-primary/30 transition-colors group">
               <CardHeader className="pb-3">
                 <div className="flex items-start justify-between">
                   <div>
@@ -135,24 +136,29 @@ export default function AdminDepartmentsPage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="flex gap-4 text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1"><School className="h-3 w-3" />{dept.stats?.sectionsCount ?? dept.sections?.length ?? 0} classes</span>
+                <div className="flex gap-4 text-xs text-muted-foreground mb-4">
+                  <span className="flex items-center gap-1"><School className="h-3 w-3" />{dept.stats?.sectionsCount ?? dept.sections?.length ?? 0} sections</span>
                   {dept.head && <span className="flex items-center gap-1"><Users className="h-3 w-3" />Head: {dept.head.name}</span>}
                 </div>
-                <div className="mt-4 flex gap-2">
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" className="flex-1" asChild>
+                    <Link href={`/admin/departments/${dept.id}`}>
+                      Open dashboard <ArrowRight className="ml-1 h-3 w-3" />
+                    </Link>
+                  </Button>
                   <select
-                    className="h-8 flex-1 rounded-md border border-input bg-background px-2 text-xs"
+                    className="h-8 w-28 rounded-md border border-input bg-background px-2 text-xs"
                     value={headSelections[dept.id] ?? dept.head?.id ?? ""}
                     onChange={(e) => setHeadSelections((current) => ({ ...current, [dept.id]: e.target.value }))}
                   >
-                    <option value="">No head assigned</option>
+                    <option value="">No head</option>
                     {headCandidates.map((user) => (
                       <option key={user.id} value={user.id}>{user.name}</option>
                     ))}
                   </select>
                   <Button
                     size="sm"
-                    variant="outline"
+                    variant="ghost"
                     onClick={() => assignHeadMutation.mutate({ departmentId: dept.id, headId: headSelections[dept.id] ?? dept.head?.id ?? "" })}
                     disabled={assignHeadMutation.isPending}
                   >

@@ -19,7 +19,7 @@ router.get(
   requireScope((req) => ({ departmentId: req.params.departmentId })),
   departmentLeaderboardController
 );
-router.get("/platform", authenticate, requirePermission("analytics:platform"), platformLeaderboardController);
+router.get("/platform", authenticate, platformLeaderboardController);
 router.post(
   "/recompute/:sectionId",
   authenticate,
@@ -28,7 +28,7 @@ router.post(
   recomputeLeaderboardController
 );
 
-router.get("/global", authenticate, requirePermission("analytics:platform"), platformLeaderboardController);
+router.get("/global", authenticate, platformLeaderboardController);
 router.get(
   "/class/:classId",
   authenticate,

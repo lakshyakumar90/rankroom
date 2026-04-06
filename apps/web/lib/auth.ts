@@ -2,6 +2,10 @@ import { createClient } from "./supabase/client";
 import { useAuthStore } from "@/store/auth";
 import type { AuthUser } from "@/store/auth";
 
+export function useCurrentUser() {
+  return { user: useAuthStore((state) => state.user) };
+}
+
 // ============================================================================
 // AUTH TOKEN UTILITY
 // ============================================================================
@@ -109,6 +113,17 @@ export async function hydrateUser(): Promise<AuthUser | null> {
  */
 export function clearAuth(): void {
   useAuthStore.getState().clearUser();
+}
+
+/**
+ * Drop Supabase cookies and local store when the session exists but /auth/me (or sync)
+ * fails. Without this, middleware still sees a Supabase user and redirects /login →
+ * /dashboard while the client keeps sending users to login — an infinite loop.
+ */
+export async function signOutLocalAndClearStore(): Promise<void> {
+  const supabase = createClient();
+  await supabase.auth.signOut();
+  clearAuth();
 }
 
 // ============================================================================

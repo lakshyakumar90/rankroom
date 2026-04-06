@@ -236,3 +236,104 @@ export async function getDepartmentLeaderboard(id: string, search?: string) {
     orderBy: [{ totalScore: "desc" }, { updatedAt: "desc" }],
   });
 }
+
+export async function getDepartmentTeachers(id: string) {
+  const rows = await prisma.teacherSubjectAssignment.findMany({
+    where: { section: { departmentId: id } },
+    distinct: ["teacherId"],
+    include: {
+      teacher: { select: userSelect },
+      subject: { select: { id: true, name: true, code: true } },
+      section: { select: { id: true, name: true, code: true } },
+    },
+    orderBy: { teacher: { name: "asc" } },
+  });
+  // Merge multiple subjects per teacher into one record
+  const teacherMap = new Map<string, typeof rows[0] & { subjects: Array<{ id: string; name: string; code: string; sectionId: string; sectionName: string }> }>();
+  for (const row of rows) {
+    if (!teacherMap.has(row.teacherId)) {
+      teacherMap.set(row.teacherId, { ...row, subjects: [] });
+    }
+    teacherMap.get(row.teacherId)!.subjects.push({
+      id: row.subject.id,
+      name: row.subject.name,
+      code: row.subject.code,
+      sectionId: row.section.id,
+      sectionName: row.section.name,
+    });
+  }
+  return Array.from(teacherMap.values()).map(({ teacher, subjects }) => ({ ...teacher, subjects }));
+}
+
+export async function getDepartmentStudents(id: string, search?: string) {
+  return prisma.enrollment.findMany({
+    where: {
+      section: { departmentId: id },
+      ...(search
+        ? { student: { name: { contains: search, mode: "insensitive" } } }
+        : {}),
+    },
+    include: {
+      student: {
+        select: {
+          ...userSelect,
+          studentProfile: {
+            select: { cgpa: true, leetcodeSolved: true, githubContributions: true },
+          },
+        },
+      },
+      section: { select: { id: true, name: true, code: true } },
+    },
+    orderBy: { student: { name: "asc" } },
+  });
+}
+
+export async function getDepartmentContests(id: string) {
+  return prisma.contest.findMany({
+    where: { OR: [{ departmentId: id }, { section: { departmentId: id } }] },
+    include: {
+      createdBy: { select: { id: true, name: true } },
+      section: { select: { id: true, name: true } },
+      _count: { select: { registrations: true, problems: true } },
+    },
+    orderBy: { startTime: "desc" },
+  });
+}
+
+export async function getDepartmentHackathons(id: string) {
+  return prisma.hackathon.findMany({
+    where: { departmentId: id },
+    include: {
+      createdBy: { select: { id: true, name: true } },
+      _count: { select: { registrations: true, teams: true } },
+    },
+    orderBy: { startDate: "desc" },
+  });
+}
+
+export async function getDepartmentDashboard(id: string) {
+  const [stats, sections, recentNotifications] = await Promise.all([
+    buildDepartmentStats(id),
+    prisma.section.findMany({
+      where: { departmentId: id },
+      include: {
+        coordinator: { select: userSelect },
+        _count: { select: { enrollments: true, subjects: true } },
+      },
+      orderBy: [{ semester: "asc" }, { name: "asc" }],
+    }),
+    prisma.notification.findMany({
+      where: {
+        OR: [
+          { targetDepartmentId: id },
+          { targetSection: { departmentId: id } },
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+      select: { id: true, type: true, title: true, message: true, createdAt: true, link: true },
+    }),
+  ]);
+
+  return { stats, sections, recentNotifications };
+}

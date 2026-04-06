@@ -7,17 +7,40 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { type ApiResponse, type Contest, ContestStatus } from "@repo/types";
+import { type ApiResponse, ContestStatus } from "@repo/types";
 import { formatDateTime } from "@/lib/utils";
-import { Calendar, Clock, Trophy, Users, BookOpen, BarChart3, CheckCircle2 } from "lucide-react";
+import { Calendar, Clock, Trophy, Users, BookOpen, BarChart3, CheckCircle2, AlertCircle } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { useAuthStore } from "@/store/auth";
 
-interface ContestDetail extends Contest {
+interface RegistrationState {
+  status: "NOT_REGISTERED" | "REGISTERED" | "PENDING" | "WITHDRAWN" | "WAITLISTED" | "REJECTED";
+  canRegister?: boolean;
+  reason?: string | null;
+}
+
+interface ContestDetail {
+  id: string;
+  title: string;
+  description?: string | null;
+  status: string;
+  type: string;
+  startTime: string;
+  endTime: string;
+  registrationEnd?: string | null;
+  rules?: string | null;
+  maxParticipants?: number | null;
   createdBy: { id: string; name: string };
-  _count: { registrations: number; problems: number };
-  isRegistered: boolean;
+  _count?: { registrations: number; problems: number };
+  problems?: { problem: { id: string; title: string; difficulty: string; points: number } }[];
+  isRegistered?: boolean;
+  viewerState?: {
+    registrationState: RegistrationState;
+    isStaff: boolean;
+    ownStanding?: { totalScore: number; rank: number; solvedCount: number; acceptedCount?: number; wrongCount?: number } | null;
+  };
+  registrations?: { user: { id: string; name: string; email: string } }[];
 }
 
 function CountdownTimer({ target }: { target: Date }) {
@@ -63,8 +86,8 @@ export default function ContestDetailPage({
   const contest = data?.data;
 
   const statusVariant = (s: string): "live" | "upcoming" | "ended" | "outline" => {
-    if (s === "LIVE") return "live";
-    if (s === "UPCOMING") return "upcoming";
+    if (s === "LIVE" || s === "ONGOING") return "live";
+    if (s === "UPCOMING" || s === "SCHEDULED" || s === "REGISTRATION_OPEN") return "upcoming";
     return "ended";
   };
 
@@ -86,9 +109,23 @@ export default function ContestDetailPage({
 
   const startTime = new Date(contest.startTime);
   const endTime = new Date(contest.endTime);
-  const isLive = contest.status === ContestStatus.LIVE;
-  const isUpcoming = contest.status === ContestStatus.UPCOMING;
-  const isEnded = contest.status === ContestStatus.ENDED;
+  const isLive = contest.status === ContestStatus.LIVE || contest.status === "ONGOING";
+  const isUpcoming = ["UPCOMING", "SCHEDULED", "REGISTRATION_OPEN"].includes(contest.status);
+  const isEnded = ["ENDED", "COMPLETED", "ARCHIVED"].includes(contest.status);
+
+  // Derive registration state from either top-level flag or viewerState
+  const regState = contest.viewerState?.registrationState;
+  const isRegistered = contest.isRegistered === true || regState?.status === "REGISTERED";
+  const isPending = regState?.status === "PENDING";
+  const isWaitlisted = regState?.status === "WAITLISTED";
+  const canRegister = regState?.status === "NOT_REGISTERED" && (regState.canRegister ?? true);
+  const regClosedReason = regState?.status === "NOT_REGISTERED" && !regState.canRegister ? regState.reason : null;
+
+  // Counts — support both _count object and derived from arrays
+  const problemCount = contest._count?.problems ?? contest.problems?.length ?? 0;
+  const registrationCount = contest._count?.registrations ?? contest.registrations?.length ?? 0;
+
+  const isStaff = contest.viewerState?.isStaff ?? false;
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -96,12 +133,14 @@ export default function ContestDetailPage({
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-2xl font-bold tracking-tight">{contest.title}</h1>
-          <Badge variant={statusVariant(contest.status)}>{contest.status}</Badge>
+          <Badge variant={statusVariant(contest.status)}>{contest.status.replace("_", " ")}</Badge>
           <Badge variant="outline">{contest.type}</Badge>
         </div>
-        <p className="text-muted-foreground leading-relaxed">{contest.description}</p>
+        {contest.description && (
+          <p className="text-muted-foreground leading-relaxed">{contest.description}</p>
+        )}
         <p className="text-sm text-muted-foreground">
-          Created by {contest.createdBy.name}
+          Created by {contest.createdBy?.name ?? "Unknown"}
         </p>
       </div>
 
@@ -138,7 +177,7 @@ export default function ContestDetailPage({
               <Trophy className="h-4 w-4" />
               <span className="text-xs">Problems</span>
             </div>
-            <p className="text-2xl font-bold">{contest._count.problems}</p>
+            <p className="text-2xl font-bold">{problemCount}</p>
           </CardContent>
         </Card>
         <Card>
@@ -147,29 +186,75 @@ export default function ContestDetailPage({
               <Users className="h-4 w-4" />
               <span className="text-xs">Registered</span>
             </div>
-            <p className="text-2xl font-bold">{contest._count.registrations}</p>
+            <p className="text-2xl font-bold">{registrationCount}</p>
           </CardContent>
         </Card>
       </div>
 
+      {/* Own standing (if student has participated) */}
+      {contest.viewerState?.ownStanding && (
+        <Card className="border-primary/20 bg-primary/5">
+          <CardContent className="flex items-center gap-6 p-5">
+            <div>
+              <p className="text-xs text-muted-foreground">Your Rank</p>
+              <p className="text-2xl font-bold">#{contest.viewerState.ownStanding.rank}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Score</p>
+              <p className="text-2xl font-bold">{contest.viewerState.ownStanding.totalScore}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Solved</p>
+              <p className="text-2xl font-bold">{contest.viewerState.ownStanding.solvedCount}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Accepted</p>
+              <p className="text-2xl font-bold">{contest.viewerState.ownStanding.acceptedCount ?? contest.viewerState.ownStanding.solvedCount}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Wrong</p>
+              <p className="text-2xl font-bold">{contest.viewerState.ownStanding.wrongCount ?? 0}</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Registration closed reason */}
+      {regClosedReason && (
+        <div className="flex items-center gap-2 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-600">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          {regClosedReason}
+        </div>
+      )}
+
       {/* Register / Action */}
-      {user && !isEnded && (
+      {user && user.role === "STUDENT" && !isEnded && (
         <div className="flex items-center gap-3">
-          {contest.isRegistered ? (
+          {isRegistered ? (
             <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-500">
               <CheckCircle2 className="h-4 w-4" />
               Registered
             </div>
-          ) : (
+          ) : isPending ? (
+            <div className="flex items-center gap-2 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-2 text-sm text-yellow-500">
+              <Clock className="h-4 w-4" />
+              Registration Pending
+            </div>
+          ) : isWaitlisted ? (
+            <div className="flex items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm text-blue-500">
+              <Users className="h-4 w-4" />
+              Waitlisted
+            </div>
+          ) : canRegister ? (
             <Button
               onClick={() => registerMutation.mutate()}
               disabled={registerMutation.isPending}
             >
               {registerMutation.isPending ? "Registering…" : "Register Now"}
             </Button>
-          )}
+          ) : null}
 
-          {isLive && contest.isRegistered && (
+          {isLive && (isRegistered || isStaff) && (
             <Link href={`/contests/${id}/problems`}>
               <Button variant="outline">
                 <BookOpen className="h-4 w-4 mr-2" />
@@ -180,10 +265,29 @@ export default function ContestDetailPage({
         </div>
       )}
 
+      {/* Staff: registrations list */}
+      {isStaff && contest.registrations && contest.registrations.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Registered Participants ({contest.registrations.length})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-1 max-h-64 overflow-y-auto">
+              {contest.registrations.map((r) => (
+                <div key={r.user.id} className="flex items-center justify-between py-1 text-sm border-b border-border/50 last:border-0">
+                  <span>{r.user.name}</span>
+                  <span className="text-muted-foreground text-xs">{r.user.email}</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Navigation links for live/ended */}
       {(isLive || isEnded) && (
         <div className="flex flex-wrap gap-3">
-          {(contest.isRegistered || isEnded) && (
+          {(isRegistered || isStaff || isEnded) && (
             <Link href={`/contests/${id}/problems`}>
               <Button variant="outline" size="sm">
                 <BookOpen className="h-4 w-4 mr-1" />

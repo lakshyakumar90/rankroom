@@ -3,7 +3,7 @@
   "extends": "@repo/typescript-config/base.json",
   "compilerOptions": {
     "module": "CommonJS",
-    "moduleResolution": "Node",
+    "moduleResolution": "bundler",
     "noEmit": true
   },
   "include": ["src"],

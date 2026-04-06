@@ -5,8 +5,14 @@ import { createRedisConnection } from "../lib/redis";
 import { logger } from "../lib/logger";
 import { emitContestStandingUpdate, emitSubmissionResult } from "../lib/socket";
 import { logActivity } from "../lib/activity";
-import { LANGUAGE_IDS, mapVerdict, runBatch, toTestResult } from "../services/judge.service";
+import { runBatch, toTestResult } from "../services/judge.service";
+import { executeSubmissionCases, normalizeExecutionSource } from "../services/execution.service";
+import type { CompareMode } from "../services/comparator.service";
 import { recomputeSectionLeaderboard } from "../services/leaderboard.service";
+import { recomputeStudentIntelligence } from "../services/student-intelligence.service";
+import { getJudge0LanguageId } from "../lib/judge0-languages";
+import { truncateUtf8 } from "../config/execution";
+import { WORKER_CONCURRENCY } from "../config/judge0";
 
 export const SUBMISSION_QUEUE = "code-submissions";
 export const LEADERBOARD_QUEUE = "leaderboard-updates";
@@ -58,44 +64,135 @@ function mapSubmissionStatus(verdict: Verdict) {
 }
 
 async function updateContestStanding(contestId: string, userId: string, problemId: string) {
-  const contestProblem = await prisma.contestProblem.findUnique({
-    where: { contestId_problemId: { contestId, problemId } },
+  const contest = await prisma.contest.findUnique({
+    where: { id: contestId },
+    select: { penaltyMinutes: true, startTime: true },
   });
+  if (!contest) return;
 
-  if (!contestProblem) return;
+  const [contestProblems, users, submissions] = await Promise.all([
+    prisma.contestProblem.findMany({ where: { contestId } }),
+    prisma.contestRegistration.findMany({
+      where: { contestId, status: { not: "WITHDRAWN" } },
+      select: { userId: true },
+    }),
+    prisma.submission.findMany({
+      where: { contestId },
+      select: { userId: true, problemId: true, status: true, createdAt: true },
+      orderBy: { createdAt: "asc" },
+    }),
+  ]);
 
-  const acceptedCount = await prisma.submission.count({
-    where: { contestId, userId, problemId, status: "ACCEPTED" },
-  });
+  const pointsByProblem = new Map(contestProblems.map((entry) => [entry.problemId, entry.points]));
+  const userIds = [...new Set([...users.map((entry) => entry.userId), ...submissions.map((entry) => entry.userId), userId])];
+  const penaltyMinutes = contest.penaltyMinutes ?? 10;
 
-  if (acceptedCount > 1) return;
+  const recalculated = userIds.map((currentUserId) => {
+    const userSubs = submissions.filter((entry) => entry.userId === currentUserId);
+    const perProblemResults: Record<string, {
+      accepted: boolean;
+      wrongCount: number;
+      acceptedAt: string | null;
+      solveTimeSeconds: number | null;
+    }> = {};
 
-  await prisma.contestStanding.upsert({
-    where: { contestId_userId: { contestId, userId } },
-    update: {
-      totalScore: { increment: contestProblem.points },
-      solvedCount: { increment: 1 },
-      lastSubmitTime: new Date(),
-    },
-    create: {
+    let solvedCount = 0;
+    let acceptedCount = 0;
+    let wrongCount = 0;
+    let totalScore = 0;
+    let penalty = 0;
+    let solveTimeSeconds = 0;
+    let lastAcceptedTime: Date | null = null;
+    let lastSubmitTime: Date | null = null;
+
+    for (const contestProblem of contestProblems) {
+      const problemSubs = userSubs.filter((entry) => entry.problemId === contestProblem.problemId);
+      const acceptedSubmission = problemSubs.find((entry) => entry.status === "ACCEPTED") ?? null;
+      const wrongBeforeAccepted = problemSubs.filter((entry) =>
+        entry.status !== "ACCEPTED" && (!acceptedSubmission || entry.createdAt < acceptedSubmission.createdAt)
+      ).length;
+
+      const accepted = Boolean(acceptedSubmission);
+      const acceptedAt = acceptedSubmission?.createdAt ?? null;
+      const currentSolveTimeSeconds = acceptedAt
+        ? Math.max(0, Math.floor((acceptedAt.getTime() - contest.startTime.getTime()) / 1000))
+        : null;
+
+      perProblemResults[contestProblem.problemId] = {
+        accepted,
+        wrongCount: wrongBeforeAccepted,
+        acceptedAt: acceptedAt?.toISOString() ?? null,
+        solveTimeSeconds: currentSolveTimeSeconds,
+      };
+
+      wrongCount += wrongBeforeAccepted;
+      if (acceptedSubmission) {
+        solvedCount += 1;
+        acceptedCount += 1;
+        totalScore += pointsByProblem.get(contestProblem.problemId) ?? 0;
+        penalty += wrongBeforeAccepted * penaltyMinutes;
+        solveTimeSeconds += currentSolveTimeSeconds ?? 0;
+        if (!lastAcceptedTime || acceptedSubmission.createdAt > lastAcceptedTime) {
+          lastAcceptedTime = acceptedSubmission.createdAt;
+        }
+      }
+    }
+
+    lastSubmitTime = userSubs[userSubs.length - 1]?.createdAt ?? null;
+
+    return {
       contestId,
-      userId,
-      totalScore: contestProblem.points,
-      solvedCount: 1,
-      lastSubmitTime: new Date(),
-    },
+      userId: currentUserId,
+      totalScore,
+      solvedCount,
+      acceptedCount,
+      wrongCount,
+      penalty: penalty + Math.floor(solveTimeSeconds / 60),
+      solveTimeSeconds,
+      perProblemResults,
+      lastAcceptedTime,
+      lastSubmitTime,
+    };
   });
 
-  const standings = await prisma.contestStanding.findMany({
-    where: { contestId },
-    orderBy: [{ totalScore: "desc" }, { lastSubmitTime: "asc" }],
-  });
+  recalculated.sort(
+    (a, b) =>
+      b.solvedCount - a.solvedCount ||
+      a.penalty - b.penalty ||
+      a.solveTimeSeconds - b.solveTimeSeconds ||
+      (a.lastAcceptedTime?.getTime() ?? Number.MAX_SAFE_INTEGER) - (b.lastAcceptedTime?.getTime() ?? Number.MAX_SAFE_INTEGER)
+  );
 
   await prisma.$transaction(
-    standings.map((entry, index) =>
-      prisma.contestStanding.update({
-        where: { id: entry.id },
-        data: { rank: index + 1 },
+    recalculated.map((entry, index) =>
+      prisma.contestStanding.upsert({
+        where: { contestId_userId: { contestId, userId: entry.userId } },
+        update: {
+          totalScore: entry.totalScore,
+          solvedCount: entry.solvedCount,
+          acceptedCount: entry.acceptedCount,
+          wrongCount: entry.wrongCount,
+          penalty: entry.penalty,
+          solveTimeSeconds: entry.solveTimeSeconds,
+          perProblemResults: entry.perProblemResults as Prisma.InputJsonValue,
+          lastAcceptedTime: entry.lastAcceptedTime,
+          lastSubmitTime: entry.lastSubmitTime,
+          rank: index + 1,
+        },
+        create: {
+          contestId,
+          userId: entry.userId,
+          totalScore: entry.totalScore,
+          solvedCount: entry.solvedCount,
+          acceptedCount: entry.acceptedCount,
+          wrongCount: entry.wrongCount,
+          penalty: entry.penalty,
+          solveTimeSeconds: entry.solveTimeSeconds,
+          perProblemResults: entry.perProblemResults as Prisma.InputJsonValue,
+          lastAcceptedTime: entry.lastAcceptedTime,
+          lastSubmitTime: entry.lastSubmitTime,
+          rank: index + 1,
+        },
       })
     )
   );
@@ -103,7 +200,7 @@ async function updateContestStanding(contestId: string, userId: string, problemI
   const hydratedStandings = await prisma.contestStanding.findMany({
     where: { contestId },
     include: { user: { select: { id: true, name: true, avatar: true } } },
-    orderBy: [{ rank: "asc" }, { totalScore: "desc" }],
+    orderBy: [{ rank: "asc" }],
   });
 
   emitContestStandingUpdate(contestId, hydratedStandings);
@@ -116,32 +213,153 @@ export function startSubmissionWorker() {
       const { submissionId, userId, problemId, source_code, language, contestId } = job.data;
       logger.info({ submissionId }, "Processing submission job");
 
-      const languageId = LANGUAGE_IDS[language];
-      if (!languageId) {
-        throw new Error(`Unsupported language: ${language}`);
+      const existingSubmission = await prisma.submission.findUnique({
+        where: { id: submissionId },
+        select: { status: true },
+      });
+
+      if (!existingSubmission) {
+        logger.warn({ submissionId }, "Submission not found while processing queue job");
+        return;
       }
 
-      const testCases = await prisma.testCase.findMany({
+      if (existingSubmission.status !== "PENDING") {
+        logger.info({ submissionId, status: existingSubmission.status }, "Skipping already processed submission job");
+        return;
+      }
+
+      emitSubmissionResult(userId, {
+        submissionId,
+        verdict: "JUDGING",
+        runtime: null,
+        memory: null,
+        testResults: [],
+        submittedAt: new Date().toISOString(),
+      });
+
+      const problem = await prisma.problem.findUnique({
+        where: { id: problemId },
+        select: { functionName: true, returnType: true, parameterTypes: true, compareMode: true, timeLimitMs: true, memoryLimitKb: true, difficulty: true },
+      });
+
+      if (!problem) throw new Error(`Problem not found: ${problemId}`);
+
+      let testCases = await prisma.testCase.findMany({
         where: { problemId, isHidden: true },
         orderBy: { createdAt: "asc" },
       });
 
-      if (testCases.length === 0) {
-        throw new Error("No hidden test cases configured for this problem");
+      if (contestId && testCases.length === 0) {
+        await prisma.submission.update({
+          where: { id: submissionId },
+          data: {
+            status: "WRONG_ANSWER",
+            verdict: [{ error: "Contest submissions require hidden test cases." }] as unknown as Prisma.InputJsonValue,
+          },
+        });
+
+        emitSubmissionResult(userId, {
+          submissionId,
+          verdict: "WA",
+          runtime: null,
+          memory: null,
+          testResults: [],
+          submittedAt: new Date().toISOString(),
+        });
+        return;
       }
 
-      const judgeResults = await runBatch(
-        source_code,
-        languageId,
-        testCases.map((testCase) => ({
-          input: testCase.input,
-          expected_output: testCase.expectedOutput,
-        }))
-      );
+      if (testCases.length === 0) {
+        // Fallback to sample (non-hidden) test cases so the submission can still be judged
+        testCases = await prisma.testCase.findMany({
+          where: { problemId, isHidden: false },
+          orderBy: { createdAt: "asc" },
+        });
 
-      const testResults: TestResult[] = judgeResults.map((result, index) =>
-        toTestResult(result, index, testCases[index]?.expectedOutput ?? null)
-      );
+        if (testCases.length === 0) {
+          await prisma.submission.update({
+            where: { id: submissionId },
+            data: { status: "WRONG_ANSWER", verdict: [{ error: "No test cases configured for this problem." }] as unknown as Prisma.InputJsonValue },
+          });
+          emitSubmissionResult(userId, {
+            submissionId,
+            verdict: "WA",
+            runtime: null,
+            memory: null,
+            testResults: [],
+            submittedAt: new Date().toISOString(),
+          });
+          return;
+        }
+
+        logger.warn({ problemId }, "No hidden test cases found — judging against sample test cases");
+      }
+
+      // Use wrapped execution when the problem has function metadata AND the language
+      // supports wrapping (cpp / c / python). This ensures user code
+      // (function-only, no main()) gets a proper entry point before reaching Judge0.
+      const wrappedLanguages = ["python", "cpp", "c"];
+      const canWrap =
+        !!problem.functionName &&
+        !!problem.returnType &&
+        Array.isArray(problem.parameterTypes) &&
+        (problem.parameterTypes as unknown[]).length > 0 &&
+        wrappedLanguages.includes(language);
+
+      let testResults: TestResult[];
+
+      if (canWrap) {
+        const summary = await executeSubmissionCases({
+          problem: {
+            id: problemId,
+            functionName: problem.functionName,
+            parameterTypes: problem.parameterTypes,
+            returnType: problem.returnType,
+            compareMode: (problem.compareMode ?? "EXACT") as CompareMode,
+            timeLimitMs: problem.timeLimitMs,
+            memoryLimitKb: problem.memoryLimitKb,
+          },
+          userCode: source_code,
+          language,
+          testCases: testCases.map((tc) => ({
+            input: tc.input,
+            expectedOutput: tc.expectedOutput,
+            isHidden: tc.isHidden,
+          })),
+        });
+
+        testResults = summary.results.map((r) => ({
+          caseIndex: r.caseIndex,
+          // "IE" (Internal Error) is not in the Verdict union — map it to "RE"
+          verdict: (r.verdict === "IE" ? "RE" : r.verdict) as Verdict,
+          stdout: truncateUtf8(r.stdout),
+          expected: r.expected,
+          stderr: truncateUtf8(r.stderr),
+          compileOutput: truncateUtf8(r.compileOutput),
+          runtime: r.runtime ?? null,
+          memory: r.memory ?? null,
+          passed: r.passed,
+        }));
+      } else {
+        // Raw / stream-style problems — send code directly
+        const normalizedExecution = normalizeExecutionSource(language, source_code);
+        const languageId = await getJudge0LanguageId(normalizedExecution.effectiveLanguage);
+        if (!languageId) {
+          throw new Error(`Unsupported language: ${normalizedExecution.effectiveLanguage}`);
+        }
+
+        const judgeResults = await runBatch(
+          normalizedExecution.effectiveUserCode,
+          languageId,
+          testCases.map((testCase) => ({
+            input: testCase.input,
+            expected_output: testCase.expectedOutput,
+          }))
+        );
+        testResults = judgeResults.map((result, index) =>
+          toTestResult(result, index, testCases[index]?.expectedOutput ?? null)
+        );
+      }
 
       const firstFailure = testResults.find((result) => !result.passed);
       const verdict = firstFailure?.verdict ?? "AC";
@@ -170,18 +388,11 @@ export function startSubmissionWorker() {
       emitSubmissionResult(userId, payload);
 
       if (verdict === "AC") {
-        const problem = await prisma.problem.findUnique({
-          where: { id: problemId },
-          select: { difficulty: true },
+        await leaderboardQueue.add("update" as const, {
+          userId,
+          problemId,
+          difficulty: problem.difficulty as Difficulty,
         });
-
-        if (problem) {
-          await leaderboardQueue.add("update" as const, {
-            userId,
-            problemId,
-            difficulty: problem.difficulty as Difficulty,
-          });
-        }
 
         if (contestId) {
           await updateContestStanding(contestId, userId, problemId);
@@ -211,9 +422,13 @@ export function startSubmissionWorker() {
         );
 
         await logActivity(userId, "submission.accepted", { problemId, contestId: contestId ?? null });
+
+        await recomputeStudentIntelligence(userId).catch((error) => {
+          logger.warn({ userId, problemId, error: String(error) }, "Student intelligence recompute failed after accepted submission");
+        });
       }
     },
-    { connection: createRedisConnection() as never, concurrency: 4 }
+    { connection: createRedisConnection() as never, concurrency: WORKER_CONCURRENCY }
   );
 }
 

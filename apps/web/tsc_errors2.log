@@ -1,0 +1,109 @@
+
+> web@0.1.0 check-types C:\Lakshya\rankroom\apps\web
+> tsc --noEmit
+
+app/(dashboard)/admin/sections/page.tsx(115,36): error TS2322: Type 'Dispatch<SetStateAction<string>>' is not assignable to type '((value: unknown, eventDetails: SelectRootChangeEventDetails) => void) & ((value: string) => void)'.
+  Type 'Dispatch<SetStateAction<string>>' is not assignable to type '(value: unknown, eventDetails: SelectRootChangeEventDetails) => void'.
+    Types of parameters 'value' and 'value' are incompatible.
+      Type 'unknown' is not assignable to type 'SetStateAction<string>'.
+app/(dashboard)/admin/sections/page.tsx(308,45): error TS2345: Argument of type '(f: { name: string; code: string; semester: string; academicYear: string; departmentId: string; }) => { departmentId: unknown; name: string; code: string; semester: string; academicYear: string; }' is not assignable to parameter of type 'SetStateAction<{ name: string; code: string; semester: string; academicYear: string; departmentId: string; }>'.
+  Type '(f: { name: string; code: string; semester: string; academicYear: string; departmentId: string; }) => { departmentId: unknown; name: string; code: string; semester: string; academicYear: string; }' is not assignable to type '(prevState: { name: string; code: string; semester: string; academicYear: string; departmentId: string; }) => { name: string; code: string; semester: string; academicYear: string; departmentId: string; }'.
+    Call signature return types '{ departmentId: unknown; name: string; code: string; semester: string; academicYear: string; }' and '{ name: string; code: string; semester: string; academicYear: string; departmentId: string; }' are incompatible.
+      The types of 'departmentId' are incompatible between these types.
+        Type 'unknown' is not assignable to type 'string'.
+app/(dashboard)/admin/sections/page.tsx(327,47): error TS2345: Argument of type '(f: { name: string; code: string; semester: string; academicYear: string; departmentId: string; }) => { semester: unknown; name: string; code: string; academicYear: string; departmentId: string; }' is not assignable to parameter of type 'SetStateAction<{ name: string; code: string; semester: string; academicYear: string; departmentId: string; }>'.
+  Type '(f: { name: string; code: string; semester: string; academicYear: string; departmentId: string; }) => { semester: unknown; name: string; code: string; academicYear: string; departmentId: string; }' is not assignable to type '(prevState: { name: string; code: string; semester: string; academicYear: string; departmentId: string; }) => { name: string; code: string; semester: string; academicYear: string; departmentId: string; }'.
+    Call signature return types '{ semester: unknown; name: string; code: string; academicYear: string; departmentId: string; }' and '{ name: string; code: string; semester: string; academicYear: string; departmentId: string; }' are incompatible.
+      The types of 'semester' are incompatible between these types.
+        Type 'unknown' is not assignable to type 'string'.
+app/(dashboard)/admin/users/page.tsx(15,10): error TS2305: Module '"@/lib/utils"' has no exported member 'formatDate'.
+app/(dashboard)/assignments/[id]/page.tsx(13,10): error TS2305: Module '"@/lib/utils"' has no exported member 'formatDateTime'.
+app/(dashboard)/assignments/page.tsx(21,10): error TS2305: Module '"@/lib/utils"' has no exported member 'formatDateTime'.
+app/(dashboard)/assignments/page.tsx(120,22): error TS2322: Type '{ children: Element; asChild: true; }' is not assignable to type 'IntrinsicAttributes & Props<unknown>'.
+  Property 'asChild' does not exist on type 'IntrinsicAttributes & Props<unknown>'.
+app/(dashboard)/contests/[id]/page.tsx(11,10): error TS2305: Module '"@/lib/utils"' has no exported member 'formatDateTime'.
+app/(dashboard)/contests/[id]/page.tsx(136,18): error TS2322: Type '"outline" | "ended" | "live" | "upcoming"' is not assignable to type '"link" | "default" | "outline" | "secondary" | "ghost" | "destructive" | null | undefined'.
+  Type '"ended"' is not assignable to type '"link" | "default" | "outline" | "secondary" | "ghost" | "destructive" | null | undefined'.
+app/(dashboard)/contests/[id]/problems/page.tsx(10,10): error TS2305: Module '"@/lib/utils"' has no exported member 'getDifficultyColor'.
+app/(dashboard)/contests/[id]/problems/page.tsx(92,32): error TS2322: Type '"medium" | "easy" | "hard"' is not assignable to type '"link" | "default" | "outline" | "secondary" | "ghost" | "destructive" | null | undefined'.
+  Type '"medium"' is not assignable to type '"link" | "default" | "outline" | "secondary" | "ghost" | "destructive" | null | undefined'.
+app/(dashboard)/contests/create/page.tsx(328,30): error TS2322: Type '"medium" | "easy" | "hard"' is not assignable to type '"link" | "default" | "outline" | "secondary" | "ghost" | "destructive" | null | undefined'.
+  Type '"medium"' is not assignable to type '"link" | "default" | "outline" | "secondary" | "ghost" | "destructive" | null | undefined'.
+app/(dashboard)/contests/page.tsx(11,10): error TS2305: Module '"@/lib/utils"' has no exported member 'formatDateTime'.
+app/(dashboard)/hackathons/[id]/page.tsx(26,10): error TS2305: Module '"@/lib/utils"' has no exported member 'formatDateTime'.
+app/(dashboard)/hackathons/page.tsx(14,10): error TS2305: Module '"@/lib/utils"' has no exported member 'formatDateTime'.
+app/(dashboard)/leaderboard/page.tsx(8,10): error TS2305: Module '"@/lib/utils"' has no exported member 'formatPoints'.
+app/(dashboard)/notifications/page.tsx(9,14): error TS2305: Module '"@/lib/utils"' has no exported member 'formatRelativeTime'.
+app/(dashboard)/problems/page.tsx(103,22): error TS2322: Type '{ children: Element; delayDuration: number; }' is not assignable to type 'IntrinsicAttributes & TooltipProviderProps'.
+  Property 'delayDuration' does not exist on type 'IntrinsicAttributes & TooltipProviderProps'.
+app/(dashboard)/problems/page.tsx(117,77): error TS2322: Type 'unknown' is not assignable to type 'string | string[] | null'.
+app/(dashboard)/problems/page.tsx(127,73): error TS2322: Type 'unknown' is not assignable to type 'string | string[] | null'.
+app/(dashboard)/problems/page.tsx(138,36): error TS2322: Type '{ children: Element; asChild: true; }' is not assignable to type 'IntrinsicAttributes & Props<unknown>'.
+  Property 'asChild' does not exist on type 'IntrinsicAttributes & Props<unknown>'.
+app/(dashboard)/problems/page.tsx(218,45): error TS2322: Type '{ children: Element; asChild: true; }' is not assignable to type 'IntrinsicAttributes & Props<unknown>'.
+  Property 'asChild' does not exist on type 'IntrinsicAttributes & Props<unknown>'.
+app/(dashboard)/sections/[id]/page.tsx(20,10): error TS2305: Module '"@/lib/auth"' has no exported member 'useCurrentUser'.
+app/(dashboard)/skills/page.tsx(103,38): error TS2322: Type 'Dispatch<SetStateAction<string>>' is not assignable to type '((value: unknown, eventDetails: SelectRootChangeEventDetails) => void) & ((value: string) => void)'.
+  Type 'Dispatch<SetStateAction<string>>' is not assignable to type '(value: unknown, eventDetails: SelectRootChangeEventDetails) => void'.
+    Types of parameters 'value' and 'value' are incompatible.
+      Type 'unknown' is not assignable to type 'SetStateAction<string>'.
+app/(dashboard)/skills/page.tsx(113,35): error TS2322: Type 'Dispatch<SetStateAction<string>>' is not assignable to type '((value: unknown, eventDetails: SelectRootChangeEventDetails) => void) & ((value: string) => void)'.
+  Type 'Dispatch<SetStateAction<string>>' is not assignable to type '(value: unknown, eventDetails: SelectRootChangeEventDetails) => void'.
+    Types of parameters 'value' and 'value' are incompatible.
+      Type 'unknown' is not assignable to type 'SetStateAction<string>'.
+components/coding/SubmissionResultPanel.tsx(8,14): error TS2305: Module '"@/lib/utils"' has no exported member 'formatMemory'.
+components/coding/SubmissionResultPanel.tsx(8,28): error TS2305: Module '"@/lib/utils"' has no exported member 'formatRuntime'.
+components/coding/workspace/DescriptionPanel.tsx(10,14): error TS2305: Module '"@/lib/utils"' has no exported member 'formatMemory'.
+components/coding/workspace/DescriptionPanel.tsx(10,28): error TS2305: Module '"@/lib/utils"' has no exported member 'formatRelativeTime'.
+components/coding/workspace/DescriptionPanel.tsx(10,48): error TS2305: Module '"@/lib/utils"' has no exported member 'formatRuntime'.
+components/coding/workspace/DescriptionPanel.tsx(229,22): error TS2322: Type '{ children: Element[]; type: string; collapsible: true; }' is not assignable to type 'IntrinsicAttributes & Props<any>'.
+  Property 'type' does not exist on type 'IntrinsicAttributes & Props<any>'.
+components/coding/workspace/EditorPanel.tsx(40,34): error TS2322: Type '(value: string) => void' is not assignable to type '((value: unknown, eventDetails: SelectRootChangeEventDetails) => void) & ((value: string) => void)'.
+  Type '(value: string) => void' is not assignable to type '(value: unknown, eventDetails: SelectRootChangeEventDetails) => void'.
+    Types of parameters 'value' and 'value' are incompatible.
+      Type 'unknown' is not assignable to type 'string'.
+components/coding/workspace/ProblemNavbar.tsx(160,32): error TS2322: Type '{ children: Element; asChild: true; }' is not assignable to type 'IntrinsicAttributes & Props<unknown>'.
+  Property 'asChild' does not exist on type 'IntrinsicAttributes & Props<unknown>'.
+components/coding/workspace/ProblemWorkspace.tsx(20,28): error TS2322: Type '{ children: Element[]; direction: string; className: string; }' is not assignable to type 'IntrinsicAttributes & HTMLAttributes<HTMLDivElement> & { children?: ReactNode; className?: string | undefined; ... 10 more ...; style?: CSSProperties | undefined; }'.
+  Property 'direction' does not exist on type 'IntrinsicAttributes & HTMLAttributes<HTMLDivElement> & { children?: ReactNode; className?: string | undefined; ... 10 more ...; style?: CSSProperties | undefined; }'.
+components/coding/workspace/ProblemWorkspace.tsx(30,32): error TS2322: Type '{ children: Element[]; direction: string; className: string; }' is not assignable to type 'IntrinsicAttributes & HTMLAttributes<HTMLDivElement> & { children?: ReactNode; className?: string | undefined; ... 10 more ...; style?: CSSProperties | undefined; }'.
+  Property 'direction' does not exist on type 'IntrinsicAttributes & HTMLAttributes<HTMLDivElement> & { children?: ReactNode; className?: string | undefined; ... 10 more ...; style?: CSSProperties | undefined; }'.
+components/coding/workspace/TestCasePanel.tsx(9,14): error TS2305: Module '"@/lib/utils"' has no exported member 'formatMemory'.
+components/coding/workspace/TestCasePanel.tsx(9,28): error TS2305: Module '"@/lib/utils"' has no exported member 'formatRuntime'.
+components/layout/sidebar.tsx(9,14): error TS2305: Module '"@/lib/utils"' has no exported member 'formatRoleLabel'.
+components/layout/topbar.tsx(41,14): error TS2305: Module '"@/lib/utils"' has no exported member 'formatRelativeTime'.
+components/layout/topbar.tsx(41,34): error TS2305: Module '"@/lib/utils"' has no exported member 'formatRoleLabel'.
+components/layout/topbar.tsx(208,34): error TS2322: Type '{ children: Element; asChild: true; }' is not assignable to type 'IntrinsicAttributes & Props<unknown>'.
+  Property 'asChild' does not exist on type 'IntrinsicAttributes & Props<unknown>'.
+components/layout/topbar.tsx(232,34): error TS2322: Type '{ children: Element; asChild: true; }' is not assignable to type 'IntrinsicAttributes & Props<unknown>'.
+  Property 'asChild' does not exist on type 'IntrinsicAttributes & Props<unknown>'.
+components/layout/topbar.tsx(299,34): error TS2322: Type '{ children: Element; asChild: true; }' is not assignable to type 'IntrinsicAttributes & Props<unknown>'.
+  Property 'asChild' does not exist on type 'IntrinsicAttributes & Props<unknown>'.
+components/profile/public-profile-view.tsx(322,75): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+components/sections/EditSubjectDialog.tsx(116,45): error TS2345: Argument of type '(f: { name: string; code: string; teacherId: string; maxMidTerm: number; maxEndTerm: number; maxAssignment: number; maxTC: number; }) => { teacherId: unknown; name: string; code: string; maxMidTerm: number; maxEndTerm: number; maxAssignment: number; maxTC: number; }' is not assignable to parameter of type 'SetStateAction<{ name: string; code: string; teacherId: string; maxMidTerm: number; maxEndTerm: number; maxAssignment: number; maxTC: number; }>'.
+  Type '(f: { name: string; code: string; teacherId: string; maxMidTerm: number; maxEndTerm: number; maxAssignment: number; maxTC: number; }) => { teacherId: unknown; name: string; code: string; maxMidTerm: number; maxEndTerm: number; maxAssignment: number; maxTC: number; }' is not assignable to type '(prevState: { name: string; code: string; teacherId: string; maxMidTerm: number; maxEndTerm: number; maxAssignment: number; maxTC: number; }) => { name: string; code: string; teacherId: string; maxMidTerm: number; maxEndTerm: number; maxAssignment: number; maxTC: number; }'.
+    Call signature return types '{ teacherId: unknown; name: string; code: string; maxMidTerm: number; maxEndTerm: number; maxAssignment: number; maxTC: number; }' and '{ name: string; code: string; teacherId: string; maxMidTerm: number; maxEndTerm: number; maxAssignment: number; maxTC: number; }' are incompatible.
+      The types of 'teacherId' are incompatible between these types.
+        Type 'unknown' is not assignable to type 'string'.
+components/sections/ManageCoordinatorsDialog.tsx(79,22): error TS2322: Type '{ children: Element; asChild: true; }' is not assignable to type 'IntrinsicAttributes & Props<unknown>'.
+  Property 'asChild' does not exist on type 'IntrinsicAttributes & Props<unknown>'.
+components/sections/ManageCoordinatorsDialog.tsx(115,44): error TS2322: Type 'Dispatch<SetStateAction<string>>' is not assignable to type '((value: unknown, eventDetails: SelectRootChangeEventDetails) => void) & ((value: string) => void)'.
+  Type 'Dispatch<SetStateAction<string>>' is not assignable to type '(value: unknown, eventDetails: SelectRootChangeEventDetails) => void'.
+    Types of parameters 'value' and 'value' are incompatible.
+      Type 'unknown' is not assignable to type 'SetStateAction<string>'.
+components/sections/ManageTeachersDialog.tsx(62,22): error TS2322: Type '{ children: Element; asChild: true; }' is not assignable to type 'IntrinsicAttributes & Props<unknown>'.
+  Property 'asChild' does not exist on type 'IntrinsicAttributes & Props<unknown>'.
+components/sections/ManageTeachersDialog.tsx(93,54): error TS2345: Argument of type '(s: Record<string, string>) => { [x: string]: unknown; }' is not assignable to parameter of type 'SetStateAction<Record<string, string>>'.
+  Type '(s: Record<string, string>) => { [x: string]: unknown; }' is not assignable to type '(prevState: Record<string, string>) => Record<string, string>'.
+    Type '{ [x: string]: unknown; }' is not assignable to type 'Record<string, string>'.
+      'string' index signatures are incompatible.
+        Type 'unknown' is not assignable to type 'string'.
+components/sections/SectionStudentsTab.tsx(14,10): error TS2305: Module '"@/lib/auth"' has no exported member 'useCurrentUser'.
+components/sections/SectionSubjectsTab.tsx(15,10): error TS2305: Module '"@/lib/auth"' has no exported member 'useCurrentUser'.
+components/sections/SectionSubjectsTab.tsx(123,46): error TS2322: Type '{ children: Element; asChild: true; }' is not assignable to type 'IntrinsicAttributes & Props<unknown>'.
+  Property 'asChild' does not exist on type 'IntrinsicAttributes & Props<unknown>'.
+components/students/StudentPerformancePanel.tsx(140,66): error TS2322: Type '"md"' is not assignable to type '"sm" | "lg" | "default" | undefined'.
+components/ui/avatar.tsx(103,22): error TS2367: This comparison appears to be unintentional because the types '"sm" | "lg" | "default"' and '"md"' have no overlap.
+components/ui/select.tsx(15,11): error TS2578: Unused '@ts-expect-error' directive.
+old_avatar.tsx(4,14): error TS2305: Module '"@/lib/utils"' has no exported member 'getInitials'.
+ΓÇëELIFECYCLEΓÇë Command failed with exit code 2.

@@ -72,7 +72,7 @@ export default function RootPage() {
       <main>
         <section className="relative overflow-hidden pt-36 lg:pt-48 pb-20 lg:pb-32">
           {/* Background effects */}
-          <div className="absolute inset-0 z-0 bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.08),transparent_50%)]" />
+          <div className="absolute inset-0 z-0 bg-[radial-gradient(circle_at_top,var(--color-primary),transparent_50%)] opacity-10" />
           <div className="absolute -top-40 left-1/2 z-0 hidden h-[40rem] w-[40rem] -translate-x-1/2 rounded-full bg-primary/20 blur-[120px] lg:block" />
 
           <div className="mx-auto max-w-7xl px-6 lg:px-8 relative z-10">
@@ -172,7 +172,7 @@ export default function RootPage() {
                   },
                   {
                     name: 'Built-in Code Execution',
-                    description: 'Solve problems natively in the browser with our judge subsystem supporting C++, Java, Rust, Python, and more.',
+                    description: 'Solve problems natively in the browser with our judge supporting C++, Java, Python, TypeScript, and more.',
                     icon: Gamepad2, 
                   },
                   {

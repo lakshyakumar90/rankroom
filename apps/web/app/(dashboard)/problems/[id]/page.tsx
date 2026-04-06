@@ -1,147 +1,159 @@
 "use client";
 
-import { Suspense, use, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import Link from "next/link";
+import { Suspense, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { Bot, ChevronDown, ChevronLeft, ChevronRight, Copy, Loader2, Play, RotateCcw, Settings2, Terminal, Timer, Trash2, Zap, Clock4, Database, Sparkles, AlertCircle } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
-import { cn, formatMemory, formatRelativeTime, formatRuntime } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { CodeEditor, type CodeEditorRef } from "@repo/ui/editor/CodeEditor";
-import { StatusChip } from "@repo/ui/common/StatusChip";
 import type { ApiResponse, TestResult } from "@repo/types";
 import { useProblemStore } from "@/stores/problemStore";
 import { useSubmission } from "@/hooks/useSubmission";
-import { SubmissionResultPanel } from "@/components/coding/SubmissionResultPanel";
-import { DiffViewer } from "@/components/coding/DiffViewer";
 import { AiDrawer } from "@/components/coding/AiDrawer";
+import { ProblemWorkspace } from "@/components/coding/workspace/ProblemWorkspace";
+import { ProblemNavbar } from "@/components/coding/workspace/ProblemNavbar";
+import { DescriptionPanel, type SubmissionHistoryItem } from "@/components/coding/workspace/DescriptionPanel";
+import { TestCasePanel, type BottomTab } from "@/components/coding/workspace/TestCasePanel";
+import { EditorPanel } from "@/components/coding/workspace/EditorPanel";
+import { generateBoilerplateCode, hasWrappedMeta } from "@/lib/boilerplate";
+
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 interface ProblemDetailResponse {
   id: string;
   title: string;
+  createdBy?: { id: string; name: string } | null;
+  scope?: "GLOBAL" | "DEPARTMENT" | "SECTION";
   difficulty: "EASY" | "MEDIUM" | "HARD";
   description: string;
   tags: string[];
   constraints?: string | null;
-  sampleInput?: string | null;
-  sampleOutput?: string | null;
   acceptanceRate: number;
   acceptedCount: number;
   totalCount: number;
   testCases: { id: string; input: string; expectedOutput: string; isSample: boolean }[];
   hints: string[];
+  editorial?: {
+    summary?: string | null;
+    approach?: string | null;
+    complexity?: string | null;
+    fullEditorial: string;
+  } | null;
+  boilerplates?: Array<{ language: string; code: string }>;
   starterCode?: Partial<Record<string, string>>;
+  functionName?: string | null;
+  parameterTypes?: { name: string; type: string }[] | null;
+  returnType?: string | null;
   contestContext?: {
     contestId: string;
     points: number;
     hasAttempted: boolean;
     hasAccepted: boolean;
     isRegistered: boolean;
-    status: "UPCOMING" | "LIVE" | "ENDED";
+    status: "DRAFT" | "UPCOMING" | "SCHEDULED" | "REGISTRATION_OPEN" | "LIVE" | "FROZEN" | "ENDED" | "RESULTS_PUBLISHED";
     endTime: string;
+    penaltyMinutes?: number;
+    aiDisabled?: boolean;
   } | null;
 }
 
-interface SubmissionHistoryItem {
-  id: string;
-  code: string;
-  language: string;
-  runtime?: number | null;
-  memory?: number | null;
-  createdAt: string;
-  verdictLabel: "AC" | "WA" | "TLE" | "MLE" | "RE" | "CE" | "JUDGING";
-}
+// ── Fallback stubs (shown only if no starterCode and no wrapped metadata) ────
 
-const DEFAULT_CODE: Record<string, string> = {
-  javascript: "function solve(input) {\n  // Write your solution here\n}\n",
-  typescript: "function solve(input: string) {\n  // Write your solution here\n}\n",
-  python: "def solve():\n    pass\n",
-  java: "public class Main {\n  public static void main(String[] args) {\n    // Write your solution here\n  }\n}\n",
-  cpp: "#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n  // Write your solution here\n  return 0;\n}\n",
-  c: "#include <stdio.h>\n\nint main(void) {\n  // Write your solution here\n  return 0;\n}\n",
-  go: "package main\n\nfunc main() {\n  // Write your solution here\n}\n",
-  rust: "fn main() {\n  // Write your solution here\n}\n",
+const GENERIC_STUBS: Record<string, string> = {
+  python: "class Solution:\n    def solve(self):\n        pass\n",
+  cpp: "#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    // Write your solution here\n    return 0;\n}\n",
+  c: "#include <stdio.h>\n\nint main(void) {\n    // Write your solution here\n    return 0;\n}\n",
 };
 
-function getDefaultCode(language: string) {
-  return DEFAULT_CODE[language] ?? DEFAULT_CODE["python"]!;
+const LANGUAGE_ORDER = ["python", "cpp", "c"] as const;
+
+function getStarterCode(problem: ProblemDetailResponse, language: string): string {
+  // 0. DB-backed boilerplate has highest priority.
+  const dbBoilerplate = problem.boilerplates?.find((entry) => entry.language === language)?.code;
+  if (dbBoilerplate && dbBoilerplate.trim().length > 0) return dbBoilerplate;
+
+  // 1. Problem has explicit starter code for this language
+  const explicit = problem.starterCode?.[language];
+  if (explicit && explicit.trim().length > 0) return explicit;
+
+  // 2. Problem has function metadata — generate proper boilerplate
+  if (hasWrappedMeta(problem)) {
+    const generated = generateBoilerplateCode(language, {
+      functionName: problem.functionName!,
+      parameterTypes: problem.parameterTypes!,
+      returnType: problem.returnType!,
+    });
+    if (generated) return generated;
+  }
+
+  // 3. Fall back to generic stub
+  return GENERIC_STUBS[language] ?? GENERIC_STUBS["python"]!;
 }
 
-function getPreferredCode(problem: ProblemDetailResponse | undefined, language: string) {
-  return problem?.starterCode?.[language] ?? getDefaultCode(language);
-}
-
-const markdownComponents = {
-  pre({ children, ...props }: { children?: ReactNode }) {
-    return (
-      <pre className="overflow-x-auto rounded-lg bg-muted p-4" {...props}>
-        {children}
-      </pre>
-    );
-  },
-  code({ className, children, ...props }: { className?: string; children?: ReactNode }) {
-    return (
-      <code className={cn("font-mono text-sm", className)} {...props}>
-        {children}
-      </code>
-    );
-  },
-};
+// ── Main component ─────────────────────────────────────────────────────────────
 
 function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const searchParams = useSearchParams();
   const contestId = searchParams.get("contestId");
+  const queryClient = useQueryClient();
   const editorRef = useRef<CodeEditorRef>(null);
   const hydratedCodeKeyRef = useRef<string | null>(null);
   const initialLanguageHydratedRef = useRef<string | null>(null);
+
+  // Timer state
   const [timerStartedAt, setTimerStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  // Test panel state
   const [customCases, setCustomCases] = useState<string[]>([""]);
-  const [consoleText, setConsoleText] = useState("");
-  const [historyDialog, setHistoryDialog] = useState<SubmissionHistoryItem | null>(null);
-  const [isConsoleCollapsed, setIsConsoleCollapsed] = useState(false);
-  const [isTestPanelCollapsed, setIsTestPanelCollapsed] = useState(false);
-  const [activeLeftTab, setActiveLeftTab] = useState<"description" | "solutions" | "submissions" | "hints">("description");
-  const [activeBottomTab, setActiveBottomTab] = useState<"testcase" | "result">("testcase");
   const [activeTestCase, setActiveTestCase] = useState(0);
-  const code = useProblemStore((state) => state.code);
-  const language = useProblemStore((state) => state.language);
-  const fontSize = useProblemStore((state) => state.fontSize);
-  const isRunning = useProblemStore((state) => state.isRunning);
-  const isSubmitting = useProblemStore((state) => state.isSubmitting);
-  const runResults = useProblemStore((state) => state.runResults);
-  const submissionResult = useProblemStore((state) => state.submissionResult);
-  const setCode = useProblemStore((state) => state.setCode);
-  const setLanguage = useProblemStore((state) => state.setLanguage);
-  const setFontSize = useProblemStore((state) => state.setFontSize);
-  const setRunResults = useProblemStore((state) => state.setRunResults);
-  const setSubmissionResult = useProblemStore((state) => state.setSubmissionResult);
-  const setRunning = useProblemStore((state) => state.setRunning);
-  const setSubmitting = useProblemStore((state) => state.setSubmitting);
-  const { submitCode } = useSubmission(id, contestId);
+  const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>("testcase");
+  const [consoleText, setConsoleText] = useState("");
+
+  // Dialog for viewing a historical submission
+  const [historyDialog, setHistoryDialog] = useState<SubmissionHistoryItem | null>(null);
+  const [activeLeftTab, setActiveLeftTab] = useState<"description" | "editorial" | "solutions" | "submissions" | "hints">("description");
+
+  // AI drawer
   const [aiDrawerOpen, setAiDrawerOpen] = useState(false);
+
+  // Problem store
+  const code = useProblemStore((s) => s.code);
+  const language = useProblemStore((s) => s.language);
+  const fontSize = useProblemStore((s) => s.fontSize);
+  const isRunning = useProblemStore((s) => s.isRunning);
+  const isSubmitting = useProblemStore((s) => s.isSubmitting);
+  const runResults = useProblemStore((s) => s.runResults);
+  const submissionResult = useProblemStore((s) => s.submissionResult);
+  const setCode = useProblemStore((s) => s.setCode);
+  const setLanguage = useProblemStore((s) => s.setLanguage);
+  const setFontSize = useProblemStore((s) => s.setFontSize);
+  const setRunResults = useProblemStore((s) => s.setRunResults);
+  const setSubmissionResult = useProblemStore((s) => s.setSubmissionResult);
+  const setRunning = useProblemStore((s) => s.setRunning);
+  const setSubmitting = useProblemStore((s) => s.setSubmitting);
+
+  const { submitCode } = useSubmission(id, contestId);
+
+  // ── Data fetching ──────────────────────────────────────────────────────────
 
   const { data, isLoading } = useQuery({
     queryKey: ["problem-detail", id, contestId],
-    queryFn: () => api.get<ApiResponse<ProblemDetailResponse>>(`/api/problems/${id}${contestId ? `?contestId=${contestId}` : ""}`),
+    queryFn: () =>
+      api.get<ApiResponse<ProblemDetailResponse>>(
+        `/api/problems/${id}${contestId ? `?contestId=${contestId}` : ""}`
+      ),
   });
 
   const { data: historyData } = useQuery({
     queryKey: ["problem-history", id, contestId],
-    queryFn: () => api.get<ApiResponse<SubmissionHistoryItem[]>>(`/api/problems/${id}/submissions${contestId ? `?contestId=${contestId}` : ""}`),
+    queryFn: () =>
+      api.get<ApiResponse<SubmissionHistoryItem[]>>(
+        `/api/problems/${id}/submissions${contestId ? `?contestId=${contestId}` : ""}`
+      ),
   });
 
   const { data: problemListData } = useQuery({
@@ -155,61 +167,89 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
   const problemList = problemListData?.data ?? [];
   const currentIndex = problemList.findIndex((item) => item.id === id);
   const previousProblem = currentIndex > 0 ? problemList[currentIndex - 1] : null;
-  const nextProblem = currentIndex >= 0 && currentIndex < problemList.length - 1 ? problemList[currentIndex + 1] : null;
-  const activeCode = code[`${id}:${language}`] ?? getPreferredCode(problem, language);
-  const examples = useMemo(() => (problem?.testCases ?? []).filter((testCase) => testCase.isSample), [problem?.testCases]);
+  const nextProblem =
+    currentIndex >= 0 && currentIndex < problemList.length - 1 ? problemList[currentIndex + 1] : null;
+
+  const activeCode = code[`${id}:${language}`] ?? (problem ? getStarterCode(problem, language) : GENERIC_STUBS[language] ?? "");
+
+  const examples = useMemo(
+    () => (problem?.testCases ?? []).filter((tc) => tc.isSample),
+    [problem?.testCases]
+  );
+
+  const isWrappedProblem = problem ? hasWrappedMeta(problem) : false;
+
   const activeCustomInput = customCases[activeTestCase] ?? "";
   const activeRunResult = runResults?.[activeTestCase] ?? runResults?.[0] ?? null;
-  const isContestAttemptLocked = !!contestContext?.hasAttempted;
-  const submitDisabled = isSubmitting || (contestContext ? isContestAttemptLocked || contestContext.status !== "LIVE" || !contestContext.isRegistered : false);
 
-  // Reset state and hydration ref when problem ID changes
+  const submitDisabled =
+    isSubmitting ||
+    (contestContext
+      ? contestContext.hasAccepted ||
+        !["LIVE", "FROZEN"].includes(contestContext.status) ||
+        !contestContext.isRegistered
+      : false);
+
+  // ── Lifecycle ──────────────────────────────────────────────────────────────
+
+  // Reset state when problem ID changes
   useEffect(() => {
     setElapsedSeconds(0);
-    setCustomCases([""]);
-    setConsoleText("");
-    setHistoryDialog(null);
-    setIsConsoleCollapsed(false);
-    setIsTestPanelCollapsed(false);
-    setTimerStartedAt(null);
-    setActiveLeftTab("description");
     setActiveBottomTab("testcase");
     setActiveTestCase(0);
+    setConsoleText("");
+    setHistoryDialog(null);
+    setTimerStartedAt(null);
+    setActiveLeftTab("description");
+    setRunResults(null);
+    setSubmissionResult(null);
     hydratedCodeKeyRef.current = null;
     initialLanguageHydratedRef.current = null;
-  }, [id]);
+  }, [id, setRunResults, setSubmissionResult]);
 
-  // Initial hydration from localStorage
+  // Pre-populate custom cases from sample examples when problem loads
+  useEffect(() => {
+    if (!problem || examples.length === 0) return;
+    // Only pre-populate on initial load (when customCases is still the default empty array)
+    setCustomCases((prev) => {
+      if (prev.length === 1 && prev[0] === "") {
+        return examples.map((ex) => ex.input);
+      }
+      return prev;
+    });
+  }, [examples, problem]);
+
+  // Restore language from localStorage
   useEffect(() => {
     if (!id) return;
-    
-    // 1. Restore language ONCE per problem id
     if (initialLanguageHydratedRef.current !== id) {
       initialLanguageHydratedRef.current = id;
-      const savedLanguage = window.localStorage.getItem(`rankroom:language:${id}`);
-      if (savedLanguage && savedLanguage !== language) {
-        setLanguage(savedLanguage);
-        return; // Wait for next render with updated language
+      const saved = window.localStorage.getItem(`rankroom:language:${id}`);
+      if (saved && LANGUAGE_ORDER.includes(saved as (typeof LANGUAGE_ORDER)[number]) && saved !== language) {
+        setLanguage(saved);
+        return;
+      }
+      if (!LANGUAGE_ORDER.includes(language as (typeof LANGUAGE_ORDER)[number])) {
+        setLanguage("python");
+        return;
       }
     }
 
-    // 2. Restore code for this specific ID and language
+    // Restore code
     const codeKey = `${id}:${language}`;
     if (hydratedCodeKeyRef.current === codeKey) return;
-    
     const savedCode = window.localStorage.getItem(`rankroom:code:${codeKey}`);
     const currentCode = code[codeKey];
-    
     if (savedCode && savedCode !== currentCode) {
       hydratedCodeKeyRef.current = codeKey;
       setCode(id, language, savedCode);
     } else if (!currentCode && problem) {
-      // Fallback to starter code if nothing in store or storage
       hydratedCodeKeyRef.current = codeKey;
-      setCode(id, language, getPreferredCode(problem, language));
+      setCode(id, language, getStarterCode(problem, language));
     }
-  }, [id, language, problem, setCode, setLanguage]);
+  }, [id, language, problem, code, setCode, setLanguage]);
 
+  // Persist code to localStorage
   useEffect(() => {
     if (!hydratedCodeKeyRef.current) return;
     window.localStorage.setItem(`rankroom:language:${id}`, language);
@@ -219,94 +259,137 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
     return () => clearTimeout(timeout);
   }, [activeCode, id, language]);
 
+  // Timer
   useEffect(() => {
     if (timerStartedAt === null) return;
-    const interval = setInterval(() => setElapsedSeconds((current) => current + 1), 1000);
+    const interval = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
     return () => clearInterval(interval);
   }, [timerStartedAt]);
 
+  // Clamp active test case when case list shrinks
   useEffect(() => {
     if (activeTestCase >= customCases.length) {
       setActiveTestCase(Math.max(0, customCases.length - 1));
     }
-  }, [activeTestCase, customCases.length, setActiveTestCase]);
+  }, [activeTestCase, customCases.length]);
 
   useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (event.ctrlKey && event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        void handleRun();
-      }
-      if (event.ctrlKey && event.shiftKey && event.key === "Enter") {
-        event.preventDefault();
-        void handleSubmit();
-      }
-      if (event.ctrlKey && event.key === "`") {
-        event.preventDefault();
-        setIsConsoleCollapsed((current) => !current);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [handleRun, handleSubmit]); // add deps
+    if (!submissionResult || submissionResult.verdict === "PENDING" || submissionResult.verdict === "JUDGING") {
+      return;
+    }
 
-  function updateCustomCase(index: number, value: string) {
-    setCustomCases((current) => current.map((entry, entryIndex) => (entryIndex === index ? value : entry)));
+    void queryClient.invalidateQueries({ queryKey: ["problem-history", id, contestId] });
+    void queryClient.invalidateQueries({ queryKey: ["problem-detail", id, contestId] });
+  }, [contestId, id, queryClient, submissionResult]);
+
+  // ── Handlers ───────────────────────────────────────────────────────────────
+
+  function cycleLanguage(direction: 1 | -1) {
+    const ci = LANGUAGE_ORDER.indexOf(language as (typeof LANGUAGE_ORDER)[number]);
+    const ni = (Math.max(ci, 0) + direction + LANGUAGE_ORDER.length) % LANGUAGE_ORDER.length;
+    setLanguage(LANGUAGE_ORDER[ni]);
   }
 
-  function addCustomCase() {
-    setCustomCases((current) => [...current, ""]);
-    setActiveTestCase(customCases.length);
-  }
-
-  async function handleRun() {
+  const handleRun = useCallback(async () => {
     if (!problem) return;
     setRunning(true);
     setActiveBottomTab("result");
     setSubmissionResult(null);
-    setConsoleText("Running on Judge0...");
+    setConsoleText("Running on Judge0…");
     try {
-      const response = await api.post<ApiResponse<{ results: TestResult[] }>>(`/api/problems/${problem.id}/run`, {
-        source_code: activeCode,
-        language,
-        stdin: activeCustomInput || undefined,
-      });
-      setRunResults(response.data?.results ?? []);
-      setConsoleText((response.data?.results ?? []).map((result) => result.stdout ?? result.stderr ?? result.compileOutput ?? result.verdict).join("\n\n"));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to run code right now.";
+      const response = await api.post<ApiResponse<{ results: TestResult[] }>>(
+        `/api/problems/${problem.id}/run`,
+        {
+          source_code: activeCode,
+          language,
+          // Send custom input only if user has modified the default (non-empty)
+          stdin: activeCustomInput.trim() ? activeCustomInput : undefined,
+        }
+      );
+      const results = response.data?.results ?? [];
+      setRunResults(results);
+      // Build console text from all results
+      setConsoleText(
+        results
+          .map((r) => {
+            const lines: string[] = [];
+            if (r.stdout) lines.push(r.stdout.trim());
+            if (r.stderr) lines.push(`[stderr] ${r.stderr.trim()}`);
+            if (r.compileOutput) lines.push(`[compile] ${r.compileOutput.trim()}`);
+            if (!r.stdout && !r.stderr && !r.compileOutput) lines.push(r.verdict);
+            return lines.join("\n");
+          })
+          .join("\n\n--- Next case ---\n\n")
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unable to run code right now.";
       setRunResults(null);
-      setConsoleText(message);
+      setConsoleText(msg);
     } finally {
       setRunning(false);
     }
-  }
+  }, [activeCode, activeCustomInput, language, problem, setRunResults, setRunning, setSubmissionResult]);
 
-  async function handleSubmit() {
+  const handleSubmit = useCallback(async () => {
     if (!problem) return;
     setSubmitting(true);
     setRunResults(null);
-    setConsoleText("Judging on Judge0...");
+    setActiveBottomTab("console");
+    setConsoleText("Judging on Judge0…");
     try {
       await submitCode(activeCode, language);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to submit code right now.";
-      setConsoleText(message);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unable to submit right now.";
+      setConsoleText(msg);
       setSubmitting(false);
     }
+  }, [activeCode, language, problem, setRunResults, setSubmitting, submitCode]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const meta = e.ctrlKey || e.metaKey;
+      if (meta && e.key === "Enter") { e.preventDefault(); void handleRun(); }
+      if (meta && e.key === "'") { e.preventDefault(); void handleSubmit(); }
+      if (meta && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        window.localStorage.setItem(`rankroom:code:${id}:${language}`, activeCode);
+      }
+      if (meta && e.key === "[") { e.preventDefault(); cycleLanguage(-1); }
+      if (meta && e.key === "]") { e.preventDefault(); cycleLanguage(1); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handleRun, handleSubmit, id, language, activeCode]);
+
+  // ── Case management ────────────────────────────────────────────────────────
+
+  function updateCustomCase(index: number, value: string) {
+    setCustomCases((prev) => prev.map((c, i) => (i === index ? value : c)));
   }
+
+  function addCustomCase() {
+    setCustomCases((prev) => [...prev, ""]);
+    setActiveTestCase(customCases.length);
+    setActiveBottomTab("testcase");
+  }
+
+  // ── Loading state ──────────────────────────────────────────────────────────
 
   if (isLoading || !problem) {
     return (
       <div className="grid gap-4">
         <Skeleton className="h-12 w-full" />
-        <Skeleton className="h-[calc(100vh-8rem)] w-full" />
+        <Skeleton className="h-[calc(100vh-4rem)] w-full" />
       </div>
     );
   }
 
+  // ── Render ─────────────────────────────────────────────────────────────────
+
   return (
-    <div className="-m-6 flex h-screen flex-col overflow-hidden bg-background">
+    <>
       <AiDrawer
         open={aiDrawerOpen}
         onClose={() => setAiDrawerOpen(false)}
@@ -317,334 +400,118 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
         language={language}
       />
 
-      <div className="flex h-12 items-center justify-between border-b border-border px-4">
-        <div className="flex items-center gap-3 text-sm">
-          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-primary text-primary-foreground">R</span>
-          <div className="flex items-center gap-2">
-            <Link href={contestId ? `/contests/${contestId}/problems` : "/problems"} className="text-muted-foreground">
-              {contestId ? "Contest Problems" : "Problems"}
-            </Link>
-            <span className="text-muted-foreground">›</span>
-            <span>{problem.title}</span>
-          </div>
-          <Badge variant="outline" className="text-xs">{currentIndex >= 0 ? currentIndex + 1 : "--"}</Badge>
-          {contestContext ? <Badge variant="secondary" className="text-xs">{contestContext.points} pts</Badge> : null}
-        </div>
+      <ProblemWorkspace
+        navbar={
+          <ProblemNavbar
+            contestId={contestId}
+            problemId={problem.id}
+            problemTitle={problem.title}
+            problemDifficulty={problem.difficulty}
+            currentIndex={currentIndex}
+            previousProblemId={previousProblem?.id ?? null}
+            nextProblemId={nextProblem?.id ?? null}
+            contestContext={contestContext}
+            elapsedSeconds={elapsedSeconds}
+            timerStarted={timerStartedAt !== null}
+            isRunning={isRunning}
+            isSubmitting={isSubmitting}
+            submitDisabled={submitDisabled}
+            fontSize={fontSize}
+            onRun={() => void handleRun()}
+            onSubmit={() => void handleSubmit()}
+            onToggleTimer={() => setTimerStartedAt((t) => (t === null ? Date.now() : null))}
+            onResetTimer={() => { setElapsedSeconds(0); setTimerStartedAt(null); }}
+            onOpenAi={() => setAiDrawerOpen(true)}
+            onFontSizeChange={setFontSize}
+          />
+        }
+        leftPanel={
+          <DescriptionPanel
+            problem={problem}
+            history={history}
+            contestContext={contestContext}
+            activeLeftTab={activeLeftTab}
+            onLeftTabChange={setActiveLeftTab}
+            onOpenHistory={setHistoryDialog}
+          />
+        }
+        editorPanel={
+          <EditorPanel
+            editorRef={editorRef}
+            language={language}
+            fontSize={fontSize}
+            code={activeCode}
+            onLanguageChange={(lang) => {
+              setLanguage(lang);
+              // Reset code to starter for new language if not saved
+              const codeKey = `${id}:${lang}`;
+              if (!code[codeKey]) {
+                const saved = window.localStorage.getItem(`rankroom:code:${codeKey}`);
+                setCode(id, lang, saved ?? getStarterCode(problem, lang));
+              }
+            }}
+            onFontSizeChange={setFontSize}
+            onCodeChange={(v) => setCode(id, language, v)}
+            onResetCode={() => setCode(id, language, getStarterCode(problem, language))}
+          />
+        }
+        bottomPanel={
+          <TestCasePanel
+            activeTab={activeBottomTab}
+            onTabChange={setActiveBottomTab}
+            customCases={customCases}
+            activeTestCase={activeTestCase}
+            onSelectCase={setActiveTestCase}
+            onAddCase={addCustomCase}
+            activeCustomInput={activeCustomInput}
+            onChangeCustomInput={(v) => updateCustomCase(activeTestCase, v)}
+            examples={examples}
+            runResults={runResults}
+            submissionResult={submissionResult}
+            isRunning={isRunning}
+            isSubmitting={isSubmitting}
+            isWrappedProblem={isWrappedProblem}
+            consoleText={consoleText}
+            onClearConsole={() => {
+              setConsoleText("");
+              setRunResults(null);
+              setSubmissionResult(null);
+            }}
+          />
+        }
+      />
 
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon" disabled={!previousProblem} asChild>{previousProblem ? <Link href={`/problems/${previousProblem.id}`}><ChevronLeft className="h-4 w-4" /></Link> : <span><ChevronLeft className="h-4 w-4" /></span>}</Button>
-          <div className="max-w-xs truncate text-sm font-medium">{problem.title}</div>
-          <Button variant="ghost" size="icon" disabled={!nextProblem} asChild>{nextProblem ? <Link href={`/problems/${nextProblem.id}`}><ChevronRight className="h-4 w-4" /></Link> : <span><ChevronRight className="h-4 w-4" /></span>}</Button>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Badge className={cn(problem.difficulty === "EASY" && "bg-green-400/10 text-green-400", problem.difficulty === "MEDIUM" && "bg-yellow-400/10 text-yellow-400", problem.difficulty === "HARD" && "bg-red-400/10 text-red-400")}>{problem.difficulty}</Badge>
-          <div className="h-5 w-px bg-border" />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setTimerStartedAt((current) => (current === null ? Date.now() : null))}
-          >
-            <Timer className="mr-2 h-4 w-4" />
-            {timerStartedAt === null ? "Start" : "Pause"} {new Date(elapsedSeconds * 1000).toISOString().slice(11, 19)}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => { setElapsedSeconds(0); setTimerStartedAt(null); }}>
-            Reset
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon"><Settings2 className="h-4 w-4" /></Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
-              {[12, 13, 14, 15, 16].map((size) => (
-                <DropdownMenuItem key={size} onClick={() => setFontSize(size)}>
-                  Font size {size}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <div className="h-5 w-px bg-border max-sm:hidden" />
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setAiDrawerOpen(true)}
-            title="AI Assistant"
-            className="text-primary hover:bg-primary/10 hover:text-primary max-sm:hidden"
-          >
-            <Bot className="h-4 w-4" />
-          </Button>
-
-          <Button size="sm" className="bg-green-500 text-white hover:bg-green-600" onClick={() => void handleSubmit()} disabled={submitDisabled}>
-            {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-            {contestContext && isContestAttemptLocked ? "Attempt Used" : "Submit"}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => void handleRun()} disabled={isRunning}>{isRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}Run</Button>
-        </div>
-      </div>
-
-      <ResizablePanelGroup direction="horizontal" className="flex-1">
-        <ResizablePanel defaultSize={40} minSize={30} maxSize={55}>
-          <ResizablePanelGroup direction="vertical" className="h-full">
-            <ResizablePanel defaultSize={65} minSize={45}>
-              <Tabs value={activeLeftTab} onValueChange={(value) => setActiveLeftTab(value as typeof activeLeftTab)} className="h-full">
-                <div className="border-b border-border px-4 pt-3">
-                  <TabsList className="bg-transparent p-0">
-                    <TabsTrigger value="description">Description</TabsTrigger>
-                    <TabsTrigger value="solutions">Solutions</TabsTrigger>
-                    <TabsTrigger value="submissions">Submissions</TabsTrigger>
-                    <TabsTrigger value="hints">Hints</TabsTrigger>
-                  </TabsList>
-                </div>
-
-                <TabsContent value="description" className="h-[calc(100%-3rem)]">
-                  <ScrollArea className="h-full px-6 py-5">
-                    <div className="space-y-6">
-                      <div className="space-y-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h1 className="text-xl font-bold">{problem.title}</h1>
-                          <Badge className={cn(problem.difficulty === "EASY" && "bg-green-400/10 text-green-400", problem.difficulty === "MEDIUM" && "bg-yellow-400/10 text-yellow-400", problem.difficulty === "HARD" && "bg-red-400/10 text-red-400")}>{problem.difficulty}</Badge>
-                          {problem.tags.map((tag) => <Badge key={tag} variant="outline">{tag}</Badge>)}
-                        </div>
-                      <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-                          <span>Accepted: {problem.acceptedCount}</span>
-                          <span>Submissions: {problem.totalCount}</span>
-                          <span>Acceptance Rate: {problem.acceptanceRate.toFixed(1)}%</span>
-                          {contestContext ? <span>Contest Points: {contestContext.points}</span> : null}
-                      </div>
-                      {contestContext ? (
-                        <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                          {contestContext.hasAttempted
-                            ? "You already used your contest attempt for this problem."
-                            : contestContext.status !== "LIVE"
-                              ? `Contest is ${contestContext.status.toLowerCase()}. Submission is only enabled while it is live.`
-                              : !contestContext.isRegistered
-                                ? "Register for the contest before submitting."
-                                : "Contest mode: one submission attempt only, and standings use the contest point value."}
-                        </div>
-                      ) : null}
-                      </div>
-
-                      <div className="prose prose-invert prose-sm max-w-none">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                          {problem.description}
-                        </ReactMarkdown>
-                      </div>
-
-                      {examples.map((example, index) => (
-                        <div key={example.id} className="space-y-2">
-                          <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Example {index + 1}</h3>
-                          <div className="rounded-lg bg-muted p-3 font-mono text-sm">
-                            <p><span className="text-muted-foreground">Input:</span> {example.input}</p>
-                            <p><span className="text-muted-foreground">Output:</span> {example.expectedOutput}</p>
-                          </div>
-                        </div>
-                      ))}
-
-                      {problem.constraints && (
-                        <div className="space-y-2">
-                          <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Constraints</h3>
-                          <ul className="grid gap-2">
-                            {problem.constraints.split("\n").filter(Boolean).map((constraint) => <li key={constraint} className="w-fit rounded-md bg-muted px-2 py-1 font-mono text-sm">{constraint}</li>)}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  </ScrollArea>
-                </TabsContent>
-
-                <TabsContent value="solutions" className="px-6 py-5 text-sm text-muted-foreground">Official solutions are not available yet.</TabsContent>
-
-                <TabsContent value="submissions" className="px-6 py-5">
-                  <div className="overflow-hidden rounded-lg border border-border">
-                    <div className="grid grid-cols-[120px,100px,100px,100px,140px] gap-3 border-b border-border bg-muted/40 px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      <span>Status</span>
-                      <span>Language</span>
-                      <span>Runtime</span>
-                      <span>Memory</span>
-                      <span>Submitted</span>
-                    </div>
-                    {history.length > 0 ? (
-                      history.map((submission) => (
-                        <button
-                          key={submission.id}
-                          className="grid w-full grid-cols-[120px,100px,100px,100px,140px] items-center gap-3 border-b border-border bg-card px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/40"
-                          onClick={() => setHistoryDialog(submission)}
-                        >
-                          <StatusChip verdict={submission.verdictLabel} size="sm" />
-                          <span className="text-sm text-muted-foreground">{submission.language}</span>
-                          <span className="text-sm text-muted-foreground">{formatRuntime(submission.runtime)}</span>
-                          <span className="text-sm text-muted-foreground">{formatMemory(submission.memory)}</span>
-                          <span className="text-sm text-muted-foreground">{formatRelativeTime(submission.createdAt)}</span>
-                        </button>
-                      ))
-                    ) : (
-                      <div className="px-4 py-8 text-sm text-muted-foreground">No submissions yet for this problem.</div>
-                    )}
-                  </div>
-                </TabsContent>
-                <TabsContent value="hints" className="px-6 py-5">
-                  {problem.hints.length > 0 ? (
-                    <Accordion type="single" collapsible>
-                      {problem.hints.map((hint, index) => <AccordionItem key={index} value={`hint-${index}`}><AccordionTrigger>{`Hint ${index + 1}`}</AccordionTrigger><AccordionContent className="text-sm text-muted-foreground">{hint}</AccordionContent></AccordionItem>)}
-                    </Accordion>
-                  ) : <p className="text-sm text-muted-foreground">No hints available yet.</p>}
-                </TabsContent>
-              </Tabs>
-            </ResizablePanel>
-
-            <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={35} minSize={15} collapsible collapsedSize={8}>
-              <Tabs value={activeBottomTab} onValueChange={(value) => setActiveBottomTab(value as typeof activeBottomTab)} className="h-full">
-                <div className="flex items-center justify-between border-b border-border px-4 pt-3">
-                  <TabsList className="bg-transparent p-0">
-                    <TabsTrigger value="testcase">Testcase</TabsTrigger>
-                    <TabsTrigger value="result">Test Result</TabsTrigger>
-                  </TabsList>
-                  <Button variant="ghost" size="icon" onClick={() => setIsTestPanelCollapsed((current) => !current)}>
-                    <ChevronDown className={cn("h-4 w-4 transition-transform", isTestPanelCollapsed && "rotate-180")} />
-                  </Button>
-                </div>
-                {!isTestPanelCollapsed ? (
-                  <>
-                <TabsContent value="testcase" className="h-[calc(100%-3rem)] px-4 py-4">
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <div className="flex flex-wrap gap-2">
-                        {customCases.map((_, index) => (
-                          <Button
-                            key={index}
-                            variant={activeTestCase === index ? "secondary" : "ghost"}
-                            size="sm"
-                            className="rounded-t-md"
-                            onClick={() => setActiveTestCase(index)}
-                          >
-                            Case {index + 1}
-                          </Button>
-                        ))}
-                      </div>
-                      <Button variant="outline" size="sm" className="ml-auto" onClick={addCustomCase}>+</Button>
-                    </div>
-                    <textarea value={activeCustomInput} onChange={(event) => updateCustomCase(activeTestCase, event.target.value)} className="h-24 w-full resize-none rounded-md border border-border bg-muted/50 p-2 font-mono text-sm focus:border-primary focus:outline-none" />
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium text-muted-foreground">Expected Output</p>
-                      <pre className="rounded-md bg-muted p-3 text-sm">{examples[activeTestCase]?.expectedOutput ?? examples[0]?.expectedOutput ?? "Run custom input or sample tests to compare output."}</pre>
-                    </div>
-                  </div>
-                </TabsContent>
-                <TabsContent value="result" className="h-[calc(100%-3rem)] px-4 py-4">
-                  {activeRunResult ? (
-                    <div className="space-y-4">
-                      <StatusChip verdict={activeRunResult.verdict} size="md" />
-                      <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                        <Badge variant="outline">Runtime: {formatRuntime(activeRunResult.runtime)}</Badge>
-                        <Badge variant="outline">Memory: {formatMemory(activeRunResult.memory)}</Badge>
-                        <Badge variant="outline">Exit code: {activeRunResult.passed ? 0 : 1}</Badge>
-                      </div>
-                      <div className="grid gap-3">
-                        <div><p className="mb-1 text-xs text-muted-foreground">Input</p><pre className="rounded-md bg-muted p-3 text-sm">{activeCustomInput || examples[activeTestCase]?.input || examples[0]?.input || ""}</pre></div>
-                        <div><p className="mb-1 text-xs text-muted-foreground">Expected Output</p><pre className="rounded-md bg-muted p-3 text-sm">{activeRunResult.expected ?? ""}</pre></div>
-                        <div>
-                          <p className="mb-1 text-xs text-muted-foreground">Your Output</p>
-                          {activeRunResult.verdict === "WA" ? (
-                            <DiffViewer expected={activeRunResult.expected ?? ""} actual={activeRunResult.stdout ?? ""} />
-                          ) : activeRunResult.compileOutput ? (
-                            <div className="space-y-2">
-                              <pre className="rounded-md border border-red-500/40 bg-red-950/20 p-3 text-sm text-red-200 whitespace-pre-wrap">{activeRunResult.compileOutput}</pre>
-                            </div>
-                          ) : activeRunResult.stderr ? (
-                            <pre className="rounded-md border border-orange-500/40 bg-orange-950/20 p-3 text-sm text-orange-200 whitespace-pre-wrap">{activeRunResult.stderr}</pre>
-                          ) : (
-                            <pre className="rounded-md bg-muted p-3 text-sm whitespace-pre-wrap">{activeRunResult.stdout ?? "(no output)"}</pre>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ) : <p className="text-sm text-muted-foreground">Run your code to inspect testcase results.</p>}
-                </TabsContent>
-                  </>
-                ) : (
-                  <div className="px-4 py-3 text-sm text-muted-foreground">Test panel collapsed.</div>
-                )}
-              </Tabs>
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-        <ResizablePanel defaultSize={60} minSize={45} maxSize={70}>
-          <ResizablePanelGroup direction="vertical" className="h-full">
-            <ResizablePanel defaultSize={70} minSize={45}>
-              <div className="flex h-full flex-col bg-card">
-                <div className="flex h-10 items-center gap-2 border-b border-border px-3">
-                  <Select value={language} onValueChange={(value) => setLanguage(value)}>
-                    <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
-                    <SelectContent>{Object.keys(DEFAULT_CODE).map((lang) => <SelectItem key={lang} value={lang}>{lang === "cpp" ? "C++" : lang === "c" ? "C" : lang.charAt(0).toUpperCase() + lang.slice(1)}</SelectItem>)}</SelectContent>
-                  </Select>
-                  <Select value={String(fontSize)} onValueChange={(value) => setFontSize(Number(value))}>
-                    <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
-                    <SelectContent>{[12, 13, 14, 15, 16].map((size) => <SelectItem key={size} value={String(size)}>{size}</SelectItem>)}</SelectContent>
-                  </Select>
-                  <div className="ml-auto flex items-center gap-1">
-                    <Button variant="ghost" size="icon" onClick={() => setCode(id, language, getPreferredCode(problem, language))}><RotateCcw className="h-4 w-4" /></Button>
-                    <Button variant="ghost" size="icon" onClick={() => navigator.clipboard.writeText(activeCode)}><Copy className="h-4 w-4" /></Button>
-                  </div>
-                </div>
-                <div className="min-h-0 flex-1">
-                  <CodeEditor ref={editorRef} language={language} value={activeCode} onChange={(value) => setCode(id, language, value)} fontSize={fontSize} className="h-full rounded-none border-0" minHeight={600} />
-                </div>
-              </div>
-            </ResizablePanel>
-
-            <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={30} minSize={8} collapsible collapsedSize={8}>
-              <div className="relative flex h-full flex-col border-t border-border bg-card">
-                {isRunning && <div className="absolute left-0 top-0 h-0.5 w-full animate-pulse bg-primary" />}
-                <div className="flex items-center justify-between border-b border-border px-3 py-2">
-                  <div className="flex items-center gap-2 text-sm font-medium"><Terminal className="h-4 w-4" />Console</div>
-                  <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="icon" onClick={() => setConsoleText("")}><Trash2 className="h-4 w-4" /></Button>
-                    <Button variant="ghost" size="icon" onClick={() => setIsConsoleCollapsed((current) => !current)}>
-                      <ChevronDown className={cn("h-4 w-4 transition-transform", isConsoleCollapsed && "rotate-180")} />
-                    </Button>
-                  </div>
-                </div>
-                {!isConsoleCollapsed ? (
-                <div className="min-h-0 flex-1 overflow-y-auto p-4">
-                  {isRunning ? (
-                    <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Running on Judge0...</div>
-                  ) : isSubmitting && !submissionResult ? (
-                    <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Judging submission...</div>
-                  ) : submissionResult ? (
-                    <SubmissionResultPanel result={submissionResult} />
-                  ) : consoleText ? (
-                    <pre className="whitespace-pre-wrap text-sm">{consoleText}</pre>
-                  ) : (
-                    <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Terminal className="h-4 w-4" />Run your code to see output here</div>
-                  )}
-                </div>
-                ) : (
-                  <div className="px-3 py-2 text-sm text-muted-foreground">Console collapsed. Press Ctrl+` to toggle.</div>
-                )}
-              </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
-      </ResizablePanelGroup>
-
+      {/* History viewer dialog */}
       <Dialog open={!!historyDialog} onOpenChange={(open) => !open && setHistoryDialog(null)}>
         <DialogContent className="max-w-4xl">
           <DialogTitle>Submitted Code</DialogTitle>
-          {historyDialog && <div className="h-[70vh]"><CodeEditor language={historyDialog.language} value={historyDialog.code} readOnly minHeight={700} className="h-full" /></div>}
+          {historyDialog && (
+            <div className="h-[70vh]">
+              <CodeEditor
+                language={historyDialog.language}
+                value={historyDialog.code}
+                readOnly
+                minHeight={700}
+                className="h-full"
+              />
+            </div>
+          )}
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }
 
 export default function ProblemPage({ params }: { params: Promise<{ id: string }> }) {
   return (
-    <Suspense fallback={<div className="grid gap-4"><Skeleton className="h-12 w-full" /><Skeleton className="h-[calc(100vh-8rem)] w-full" /></div>}>
+    <Suspense
+      fallback={
+        <div className="grid gap-4">
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-[calc(100vh-4rem)] w-full" />
+        </div>
+      }
+    >
       <ProblemPageContent params={params} />
     </Suspense>
   );

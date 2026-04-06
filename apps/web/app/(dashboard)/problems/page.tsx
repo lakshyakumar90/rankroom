@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { ScopeBadge } from "@/components/problems/ScopeBadge";
 import type { ApiResponse } from "@repo/types";
 
 interface ProblemRow {
@@ -25,6 +26,8 @@ interface ProblemRow {
   difficulty: "EASY" | "MEDIUM" | "HARD";
   tags: string[];
   acceptanceRate: number;
+  scope: "GLOBAL" | "DEPARTMENT" | "SECTION";
+  createdBy?: { id: string; name: string } | null;
   userStatus: "solved" | "attempted" | "unsolved";
   companies?: string[];
 }
@@ -169,6 +172,8 @@ function ProblemsPageContent() {
                 <TableHead>Title</TableHead>
                 <TableHead>Tags</TableHead>
                 <TableHead>Difficulty</TableHead>
+                <TableHead>Created By</TableHead>
+                <TableHead>Scope</TableHead>
                 <TableHead className="text-right">Acceptance</TableHead>
                 <TableHead className="text-right">Solution</TableHead>
               </TableRow>
@@ -178,7 +183,7 @@ function ProblemsPageContent() {
                 <ProblemSkeletonRows />
               ) : problems.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-16">
+                  <TableCell colSpan={9} className="py-16">
                     <div className="flex flex-col items-center gap-3 text-center">
                       <FileQuestion className="h-16 w-16 text-muted-foreground" />
                       <div>
@@ -222,8 +227,8 @@ function ProblemsPageContent() {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
-                        {problem.tags.slice(0, 3).map((tag) => <Badge key={tag} variant="secondary" className="rounded-full px-2 py-0.5 text-xs">{tag}</Badge>)}
-                        {problem.tags.length > 3 && <Badge variant="outline" className="rounded-full text-xs">+{problem.tags.length - 3} more</Badge>}
+                        {(problem.tags ?? []).slice(0, 3).map((tag) => <Badge key={tag} variant="secondary" className="rounded-full px-2 py-0.5 text-xs">{tag}</Badge>)}
+                        {(problem.tags ?? []).length > 3 && <Badge variant="outline" className="rounded-full text-xs">+{(problem.tags ?? []).length - 3} more</Badge>}
                       </div>
                     </TableCell>
                     <TableCell>
@@ -231,7 +236,9 @@ function ProblemsPageContent() {
                         {problem.difficulty}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right text-sm text-muted-foreground">{problem.acceptanceRate.toFixed(1)}%</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{problem.createdBy?.name ?? "System"}</TableCell>
+                    <TableCell><ScopeBadge scope={problem.scope} /></TableCell>
+                    <TableCell className="text-right text-sm text-muted-foreground">{(problem.acceptanceRate ?? 0).toFixed(1)}%</TableCell>
                     <TableCell className="text-right"><Lock className="ml-auto h-4 w-4 text-muted-foreground" /></TableCell>
                   </TableRow>
                 ))

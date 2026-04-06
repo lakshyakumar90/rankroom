@@ -214,7 +214,7 @@ router.post("/logout", async (req, res, next) => {
 // ============================================================================
 router.patch("/profile", authenticate, validate(updateProfileSchema), async (req, res, next) => {
   try {
-    const { name, handle, bio, skills, college, batch, department, githubUsername, isPublic, socialLinks } = req.body;
+    const { name, handle, bio, phoneNumber, skills, college, batch, department, githubUsername, isPublic, socialLinks } = req.body;
     const canEditAcademicIdentity = req.user!.role !== Role.STUDENT;
 
     const nextHandle = handle
@@ -251,6 +251,7 @@ router.patch("/profile", authenticate, validate(updateProfileSchema), async (req
         update: {
           ...(nextHandle !== undefined && { handle: nextHandle }),
           ...(bio !== undefined && { bio }),
+          ...(phoneNumber !== undefined && { phoneNumber }),
           ...(skills !== undefined && { skills }),
           ...(college !== undefined && { college }),
           ...(batch !== undefined && canEditAcademicIdentity ? { batch } : {}),

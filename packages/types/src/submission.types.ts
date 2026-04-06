@@ -10,6 +10,8 @@ export interface TestResult {
   runtime: number | null;
   memory: number | null;
   passed: boolean;
+  judgeStatusId?: number;
+  judgeStatusDescription?: string;
 }
 
 export interface SubmissionResult {

@@ -2,6 +2,7 @@ import { prisma } from "@repo/database";
 import { Role, type HackathonEligibility, type JWTPayload, type Notification } from "@repo/types";
 import { AppError } from "../middleware/error";
 import { emitNotificationToUser } from "../lib/socket";
+import { assertStudentParticipationReadiness } from "./student-profile.service";
 
 function toNotificationDto(notification: Awaited<ReturnType<typeof prisma.notification.create>>): Notification {
   return {
@@ -19,10 +20,6 @@ function toNotificationDto(notification: Awaited<ReturnType<typeof prisma.notifi
     targetDepartmentId: notification.targetDepartmentId,
     createdAt: notification.createdAt.toISOString(),
   };
-}
-
-function generateTeamCode() {
-  return Math.random().toString(36).slice(2, 8).toUpperCase();
 }
 
 async function getStudentDepartmentId(userId: string) {
@@ -71,42 +68,36 @@ export async function computeHackathonEligibility(hackathonId: string, userId: s
 
   const normalizedSkillNames = new Set(profile.skills.map((skill) => skill.name.toLowerCase()));
   const missingSkills = hackathon.minSkills.filter((skill) => !normalizedSkillNames.has(skill.toLowerCase()));
+  const skillCriteriaFailed =
+    hackathon.minSkills.length > 0 && missingSkills.length === hackathon.minSkills.length;
+  const projectCriteriaFailed = profile.projects.length < hackathon.minProjects;
+  const leetcodeCriteriaFailed = profile.leetcodeSolved < hackathon.minLeetcode;
+  const cgpaCriteriaFailed =
+    hackathon.minCgpa !== null &&
+    hackathon.minCgpa !== undefined &&
+    (profile.cgpa ?? 0) < hackathon.minCgpa;
 
-  if (hackathon.minSkills.length > 0 && missingSkills.length === hackathon.minSkills.length) {
+  const unmetCriteria: string[] = [];
+
+  if (skillCriteriaFailed) {
+    unmetCriteria.push(`Requires one of: ${hackathon.minSkills.join(", ")}`);
+  }
+  if (projectCriteriaFailed) {
+    unmetCriteria.push(`Requires ${hackathon.minProjects}+ projects`);
+  }
+  if (leetcodeCriteriaFailed) {
+    unmetCriteria.push(`Requires ${hackathon.minLeetcode}+ LeetCode solved`);
+  }
+  if (cgpaCriteriaFailed) {
+    unmetCriteria.push(`Requires ${hackathon.minCgpa}+ CGPA`);
+  }
+
+  if (unmetCriteria.length > 0) {
     return {
       isEligible: false,
-      reason: `Requires one of: ${hackathon.minSkills.join(", ")}`,
+      reason: "Eligibility criteria not met",
+      unmetCriteria,
       missingSkills,
-      currentProjects: profile.projects.length,
-      currentLeetcode: profile.leetcodeSolved,
-      currentCgpa: profile.cgpa ?? null,
-    };
-  }
-
-  if (profile.projects.length < hackathon.minProjects) {
-    return {
-      isEligible: false,
-      reason: `Requires ${hackathon.minProjects}+ projects`,
-      currentProjects: profile.projects.length,
-      currentLeetcode: profile.leetcodeSolved,
-      currentCgpa: profile.cgpa ?? null,
-    };
-  }
-
-  if (profile.leetcodeSolved < hackathon.minLeetcode) {
-    return {
-      isEligible: false,
-      reason: `Requires ${hackathon.minLeetcode}+ LeetCode solved`,
-      currentProjects: profile.projects.length,
-      currentLeetcode: profile.leetcodeSolved,
-      currentCgpa: profile.cgpa ?? null,
-    };
-  }
-
-  if (hackathon.minCgpa !== null && hackathon.minCgpa !== undefined && (profile.cgpa ?? 0) < hackathon.minCgpa) {
-    return {
-      isEligible: false,
-      reason: `Requires ${hackathon.minCgpa}+ CGPA`,
       currentProjects: profile.projects.length,
       currentLeetcode: profile.leetcodeSolved,
       currentCgpa: profile.cgpa ?? null,
@@ -145,6 +136,7 @@ export async function listHackathons(viewer?: JWTPayload, status?: string) {
         },
       },
       _count: { select: { registrations: true, teams: true } },
+      winnerEntries: { orderBy: { rank: "asc" } },
     },
     orderBy: [{ registrationDeadline: "asc" }, { createdAt: "desc" }],
   });
@@ -183,6 +175,7 @@ export async function getHackathon(viewer: JWTPayload | undefined, hackathonId: 
           team: { select: { id: true, name: true, teamCode: true, rank: true } },
         },
       },
+      winnerEntries: { orderBy: { rank: "asc" } },
     },
   });
 
@@ -319,11 +312,14 @@ export async function deleteHackathon(id: string) {
 }
 
 export async function registerForHackathon(hackathonId: string, userId: string, teamId?: string | null) {
+  void teamId;
   const hackathon = await prisma.hackathon.findUnique({ where: { id: hackathonId } });
   if (!hackathon) throw new AppError("Hackathon not found", 404);
   if (hackathon.registrationDeadline < new Date()) {
     throw new AppError("Hackathon registration deadline has passed", 400);
   }
+
+  const readiness = await assertStudentParticipationReadiness(userId);
 
   const eligibility = await computeHackathonEligibility(hackathonId, userId);
   if (!eligibility.isEligible) {
@@ -333,16 +329,20 @@ export async function registerForHackathon(hackathonId: string, userId: string, 
   const registration = await prisma.hackathonRegistration.upsert({
     where: { hackathonId_studentId: { hackathonId, studentId: userId } },
     update: {
-      teamId: teamId ?? null,
+      teamId: null,
       isEligible: eligibility.isEligible,
       eligibilityNote: eligibility.reason,
+      phoneNumberSnapshot: readiness.phoneNumber,
+      avatarUrlSnapshot: readiness.avatar,
     },
     create: {
       hackathonId,
       studentId: userId,
-      teamId: teamId ?? null,
+      teamId: null,
       isEligible: eligibility.isEligible,
       eligibilityNote: eligibility.reason,
+      phoneNumberSnapshot: readiness.phoneNumber,
+      avatarUrlSnapshot: readiness.avatar,
     },
   });
 
@@ -350,6 +350,56 @@ export async function registerForHackathon(hackathonId: string, userId: string, 
     ...registration,
     eligibility,
   };
+}
+
+export async function upsertHackathonWinners(actor: JWTPayload, hackathonId: string, winners: Array<{
+  rank: number;
+  teamName: string;
+  projectTitle?: string | null;
+  submissionUrl?: string | null;
+  notes?: string | null;
+  memberSnapshot: Array<{ name: string; email?: string | null; phoneNumber?: string | null; avatar?: string | null }>;
+}>) {
+  const hackathon = await prisma.hackathon.findUnique({
+    where: { id: hackathonId },
+    select: { id: true, endDate: true, createdById: true, departmentId: true },
+  });
+
+  if (!hackathon) throw new AppError("Hackathon not found", 404);
+  if (hackathon.endDate > new Date()) {
+    throw new AppError("Winners can only be added after the hackathon has ended", 400);
+  }
+  if (![Role.ADMIN, Role.SUPER_ADMIN].includes(actor.role)) {
+    if (hackathon.createdById !== actor.id && (!hackathon.departmentId || !actor.scope.departmentIds.includes(hackathon.departmentId))) {
+      throw new AppError("Forbidden", 403);
+    }
+  }
+  if (winners.length > 3) {
+    throw new AppError("Only top 3 winners can be recorded", 400);
+  }
+
+  await prisma.$transaction([
+    prisma.hackathonWinnerEntry.deleteMany({ where: { hackathonId } }),
+    ...winners.map((winner) =>
+      prisma.hackathonWinnerEntry.create({
+        data: {
+          hackathonId,
+          rank: winner.rank,
+          teamName: winner.teamName,
+          projectTitle: winner.projectTitle ?? null,
+          submissionUrl: winner.submissionUrl ?? null,
+          notes: winner.notes ?? null,
+          memberSnapshot: winner.memberSnapshot,
+          addedById: actor.id,
+        },
+      })
+    ),
+  ]);
+
+  return prisma.hackathonWinnerEntry.findMany({
+    where: { hackathonId },
+    orderBy: { rank: "asc" },
+  });
 }
 
 export async function getHackathonRegistrations(hackathonId: string) {
@@ -364,111 +414,17 @@ export async function getHackathonRegistrations(hackathonId: string) {
 }
 
 export async function createHackathonTeam(hackathonId: string, leaderId: string, payload: { name: string; memberUserIds: string[] }) {
-  const allMemberIds = [...new Set([leaderId, ...payload.memberUserIds])];
-  const hackathon = await prisma.hackathon.findUnique({ where: { id: hackathonId } });
-  if (!hackathon) throw new AppError("Hackathon not found", 404);
-
-  if (allMemberIds.length < hackathon.minTeamSize || allMemberIds.length > hackathon.maxTeamSize) {
-    throw new AppError("Team size is outside the allowed range", 400);
-  }
-
-  const team = await prisma.hackathonTeam.create({
-    data: {
-      name: payload.name,
-      teamCode: generateTeamCode(),
-      hackathonId,
-      leaderId,
-    },
-  });
-
-  for (const memberId of allMemberIds) {
-    const eligibility = await computeHackathonEligibility(hackathonId, memberId);
-    if (!eligibility.isEligible) {
-      throw new AppError(`Team member is not eligible: ${eligibility.reason}`, 403);
-    }
-    await prisma.hackathonRegistration.upsert({
-      where: { hackathonId_studentId: { hackathonId, studentId: memberId } },
-      update: {
-        teamId: team.id,
-        isEligible: eligibility.isEligible,
-        eligibilityNote: eligibility.reason,
-      },
-      create: {
-        hackathonId,
-        studentId: memberId,
-        teamId: team.id,
-        isEligible: eligibility.isEligible,
-        eligibilityNote: eligibility.reason,
-      },
-    });
-  }
-
-  return prisma.hackathonTeam.findUnique({
-    where: { id: team.id },
-    include: {
-      leader: { select: { id: true, name: true, avatar: true, role: true, email: true } },
-      members: {
-        include: {
-          student: { select: { id: true, name: true, avatar: true, role: true, email: true } },
-        },
-      },
-    },
-  });
+  void hackathonId;
+  void leaderId;
+  void payload;
+  throw new AppError("Self-managed hackathon teams are disabled for offline events", 410);
 }
 
 export async function updateHackathonTeam(hackathonId: string, teamId: string, payload: { name?: string; submissionUrl?: string | null; memberUserIds?: string[] }) {
-  const team = await prisma.hackathonTeam.findFirst({
-    where: { id: teamId, hackathonId },
-    include: { members: true },
-  });
-
-  if (!team) throw new AppError("Team not found", 404);
-
-  if (payload.memberUserIds) {
-    const memberIds = [...new Set([team.leaderId, ...payload.memberUserIds])];
-    await prisma.hackathonRegistration.updateMany({
-      where: { teamId: team.id },
-      data: { teamId: null },
-    });
-
-    for (const memberId of memberIds) {
-      const eligibility = await computeHackathonEligibility(hackathonId, memberId);
-      if (!eligibility.isEligible) {
-        throw new AppError(`Team member is not eligible: ${eligibility.reason}`, 403);
-      }
-      await prisma.hackathonRegistration.upsert({
-        where: { hackathonId_studentId: { hackathonId, studentId: memberId } },
-        update: {
-          teamId: team.id,
-          isEligible: eligibility.isEligible,
-          eligibilityNote: eligibility.reason,
-        },
-        create: {
-          hackathonId,
-          studentId: memberId,
-          teamId: team.id,
-          isEligible: eligibility.isEligible,
-          eligibilityNote: eligibility.reason,
-        },
-      });
-    }
-  }
-
-  return prisma.hackathonTeam.update({
-    where: { id: team.id },
-    data: {
-      ...(payload.name !== undefined ? { name: payload.name } : {}),
-      ...(payload.submissionUrl !== undefined ? { submissionUrl: payload.submissionUrl } : {}),
-    },
-    include: {
-      leader: { select: { id: true, name: true, avatar: true, role: true, email: true } },
-      members: {
-        include: {
-          student: { select: { id: true, name: true, avatar: true, role: true, email: true } },
-        },
-      },
-    },
-  });
+  void hackathonId;
+  void teamId;
+  void payload;
+  throw new AppError("Self-managed hackathon teams are disabled for offline events", 410);
 }
 
 export async function notifyEligibleStudents(actor: JWTPayload, hackathonId: string, title: string, message: string) {

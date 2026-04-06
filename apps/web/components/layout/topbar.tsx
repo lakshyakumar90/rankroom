@@ -14,6 +14,7 @@ import {
   LogOut,
   Monitor,
   Moon,
+  RefreshCw,
   Search,
   Sparkles,
   Sun,
@@ -28,9 +29,11 @@ import { useNotificationStore } from "@/store/notifications";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -45,7 +48,7 @@ interface NotificationsResponse extends ApiResponse<Notification[]> {
 
 interface SearchItem {
   id: string;
-  type: "problem" | "contest" | "assignment" | "user";
+  type: "problem" | "contest" | "assignment" | "user" | "hackathon" | "subject" | "section" | "department";
   title: string;
   subtitle: string;
   href: string;
@@ -75,6 +78,7 @@ export function Topbar({ sidebarCollapsed = false }: { sidebarCollapsed?: boolea
   const { theme, setTheme } = useTheme();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const { user, clearUser } = useAuthStore();
   const { items, unreadCount, setNotifications, markRead, markAllRead } = useNotificationStore();
   const [search, setSearch] = useState("");
@@ -116,7 +120,7 @@ export function Topbar({ sidebarCollapsed = false }: { sidebarCollapsed?: boolea
   });
 
   const profileHref = useMemo(() => {
-    if (!user?.profile?.handle) return "/profile/edit";
+    if (!user?.profile?.handle) return "/settings";
     return `/u/${user.profile.handle}`;
   }, [user?.profile?.handle]);
 
@@ -127,6 +131,60 @@ export function Topbar({ sidebarCollapsed = false }: { sidebarCollapsed?: boolea
     router.push("/login");
   }
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+      if (event.key === "Escape") {
+        setSearchOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (!searchOpen) {
+      setSearch("");
+    }
+  }, [searchOpen]);
+
+  const searchResults = searchData?.data ?? [];
+
+  function renderSearchResults() {
+    if (search.trim().length < 2) {
+      return <div className="px-4 py-6 text-sm text-muted-foreground">Type at least 2 characters to search RankRoom.</div>;
+    }
+
+    if (searchResults.length === 0) {
+      return <div className="px-4 py-6 text-sm text-muted-foreground">No results found.</div>;
+    }
+
+    return searchResults.map((result) => (
+      <button
+        key={result.id}
+        type="button"
+        className="flex w-full items-start justify-between gap-3 border-b border-border px-4 py-3 text-left last:border-b-0 hover:bg-muted"
+        onClick={() => {
+          setSearchOpen(false);
+          setSearch("");
+          router.push(result.href);
+        }}
+      >
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium">{result.title}</p>
+          <p className="truncate text-xs text-muted-foreground">{result.subtitle}</p>
+        </div>
+        <Badge variant="outline" className="shrink-0 text-[10px] uppercase">
+          {result.type}
+        </Badge>
+      </button>
+    ));
+  }
+
   return (
     <header
       className={cn(
@@ -134,7 +192,7 @@ export function Topbar({ sidebarCollapsed = false }: { sidebarCollapsed?: boolea
         sidebarCollapsed ? "lg:left-24" : "lg:left-72"
       )}
     >
-      <div className="flex h-16 w-full items-center gap-3 border-b border-border bg-card px-4 sm:px-6">
+      <div className="flex h-18 w-full items-center gap-3 border-b border-border/70 bg-card/80 px-4 backdrop-blur sm:px-6">
         <div className="min-w-0 flex-1">
           <p className="text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground">
             {formatRoleLabel(user?.role)}
@@ -144,49 +202,48 @@ export function Topbar({ sidebarCollapsed = false }: { sidebarCollapsed?: boolea
           </p>
         </div>
 
-        <div className="hidden flex-1 xl:block">
-          <div className="relative ml-auto max-w-sm">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              aria-label="Search"
-              className="h-10 bg-background pl-9"
-              placeholder="Search pages, people, or problems"
-              value={search}
-              onFocus={() => setSearchOpen(true)}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-            {searchOpen && search.trim().length >= 2 ? (
-              <div className="absolute inset-x-0 top-12 border border-border bg-card shadow-sm">
-                {(searchData?.data ?? []).length > 0 ? (
-                  (searchData?.data ?? []).map((result) => (
-                    <button
-                      key={result.id}
-                      type="button"
-                      className="flex w-full items-start justify-between gap-3 border-b border-border px-3 py-3 text-left last:border-b-0 hover:bg-muted"
-                      onClick={() => {
-                        setSearchOpen(false);
-                        setSearch("");
-                        router.push(result.href);
-                      }}
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{result.title}</p>
-                        <p className="truncate text-xs text-muted-foreground">{result.subtitle}</p>
-                      </div>
-                      <Badge variant="outline" className="shrink-0 text-[10px] uppercase">
-                        {result.type}
-                      </Badge>
-                    </button>
-                  ))
-                ) : (
-                  <div className="px-3 py-3 text-sm text-muted-foreground">No results found.</div>
-                )}
-              </div>
-            ) : null}
-          </div>
+        <div className="hidden flex-1 xl:flex xl:justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 w-full max-w-sm justify-between rounded-xl bg-background/80 px-3 text-muted-foreground"
+            onClick={() => setSearchOpen(true)}
+          >
+            <span className="flex items-center gap-2">
+              <Search className="size-4" />
+              Search across RankRoom
+            </span>
+            <span className="rounded-md border border-border px-2 py-0.5 text-[10px] uppercase tracking-[0.2em]">
+              Ctrl K
+            </span>
+          </Button>
         </div>
 
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label="Open search"
+            onClick={() => setSearchOpen(true)}
+          >
+            <Search className="size-4" />
+          </Button>
+
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label="Refresh page"
+            onClick={async () => {
+              setIsRefreshing(true);
+              router.refresh();
+              await queryClient.invalidateQueries();
+              setTimeout(() => setIsRefreshing(false), 800);
+            }}
+            disabled={isRefreshing}
+          >
+            <RefreshCw className={`size-4 ${isRefreshing ? "animate-spin" : ""}`} />
+          </Button>
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="icon" aria-label="Change theme">
@@ -194,7 +251,9 @@ export function Topbar({ sidebarCollapsed = false }: { sidebarCollapsed?: boolea
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-44">
-              <DropdownMenuLabel>Theme</DropdownMenuLabel>
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Theme</DropdownMenuLabel>
+              </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => setTheme("light")}>
                 <Sun className="size-4" />
@@ -222,9 +281,11 @@ export function Topbar({ sidebarCollapsed = false }: { sidebarCollapsed?: boolea
                 ) : null}
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-80 p-0">
+            <DropdownMenuContent align="end" className="w-80 bg-background p-0">
               <div className="flex items-center justify-between px-4 py-3">
-                <DropdownMenuLabel className="p-0 text-sm font-semibold">Notifications</DropdownMenuLabel>
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel className="p-0 text-sm font-semibold">Notifications</DropdownMenuLabel>
+                </DropdownMenuGroup>
                 {unreadCount > 0 ? (
                   <Button
                     variant="ghost"
@@ -243,7 +304,10 @@ export function Topbar({ sidebarCollapsed = false }: { sidebarCollapsed?: boolea
                   items.slice(0, 8).map((notification) => (
                     <DropdownMenuItem
                       key={notification.id}
-                      className="items-start gap-3 px-3 py-3"
+                      className={cn(
+                        "items-start gap-3 px-3 py-3",
+                        notification.isRead ? "bg-background" : "bg-primary/6"
+                      )}
                       onClick={() => {
                         if (!notification.isRead) markReadMutation.mutate(notification.id);
                         if (notification.link) router.push(notification.link);
@@ -300,7 +364,6 @@ export function Topbar({ sidebarCollapsed = false }: { sidebarCollapsed?: boolea
               </div>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => router.push(profileHref)}>View profile</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => router.push("/profile/edit")}>Edit profile</DropdownMenuItem>
               <DropdownMenuItem onClick={() => router.push("/settings")}>Settings</DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={handleLogout}>
@@ -311,6 +374,26 @@ export function Topbar({ sidebarCollapsed = false }: { sidebarCollapsed?: boolea
           </DropdownMenu>
         </div>
       </div>
+
+      <Dialog open={searchOpen} onOpenChange={setSearchOpen}>
+        <DialogContent className="max-w-3xl border-border bg-card p-0">
+          <DialogTitle className="sr-only">Global search</DialogTitle>
+          <div className="border-b border-border p-4">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                autoFocus
+                aria-label="Search RankRoom"
+                className="h-11 rounded-xl bg-background pl-10"
+                placeholder="Search problems, contests, hackathons, assignments, people, subjects, sections, and departments"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </div>
+          </div>
+          <div className="max-h-[60vh] overflow-y-auto">{renderSearchResults()}</div>
+        </DialogContent>
+      </Dialog>
     </header>
   );
 }

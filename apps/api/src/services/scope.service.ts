@@ -77,11 +77,23 @@ export async function buildUserScope(userId: string, role: Role): Promise<AuthSc
   }
 
   if (role === Role.CLASS_COORDINATOR) {
-    const sections = await prisma.section.findMany({
-      where: { coordinatorId: userId },
-      select: { id: true, departmentId: true },
-    });
+    // Load from both legacy coordinatorId and new M:N assignment table
+    const [legacySections, assignmentRows] = await Promise.all([
+      prisma.section.findMany({
+        where: { coordinatorId: userId },
+        select: { id: true, departmentId: true },
+      }),
+      prisma.sectionCoordinatorAssignment.findMany({
+        where: { userId, isActive: true },
+        select: { section: { select: { id: true, departmentId: true } } },
+      }),
+    ]);
 
+    const allSections = new Map<string, { id: string; departmentId: string }>();
+    for (const s of legacySections) allSections.set(s.id, s);
+    for (const a of assignmentRows) allSections.set(a.section.id, a.section);
+
+    const sections = Array.from(allSections.values());
     const sectionIds = sections.map((section) => section.id);
     const departmentIds = [...new Set(sections.map((section) => section.departmentId))];
 

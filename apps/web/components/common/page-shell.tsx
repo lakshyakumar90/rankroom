@@ -8,7 +8,7 @@ export function PageContainer({
   children: ReactNode;
   className?: string;
 }) {
-  return <div className={cn("page-grid", className)}>{children}</div>;
+  return <div className={cn("mx-auto flex w-full max-w-screen-2xl flex-col gap-6", className)}>{children}</div>;
 }
 
 export function PageHeader({
@@ -23,7 +23,7 @@ export function PageHeader({
   actions?: ReactNode;
 }) {
   return (
-    <div className="page-header">
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div className="flex max-w-3xl flex-col gap-2">
         {eyebrow ? (
           <p className="text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground">
@@ -39,7 +39,7 @@ export function PageHeader({
           ) : null}
         </div>
       </div>
-      {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
+      {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
     </div>
   );
 }
@@ -51,7 +51,7 @@ export function SectionCard({
   children: ReactNode;
   className?: string;
 }) {
-  return <section className={cn("surface-panel p-4 sm:p-6", className)}>{children}</section>;
+  return <section className={cn("surface-panel rounded-xl p-4 sm:p-6", className)}>{children}</section>;
 }
 
 export function SectionHeading({
@@ -84,7 +84,7 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="surface-inset flex min-h-56 flex-col items-center justify-center gap-3 px-6 py-10 text-center">
+    <div className="surface-inset flex min-h-56 flex-col items-center justify-center gap-3 rounded-xl px-6 py-10 text-center">
       <div className="flex max-w-md flex-col gap-2">
         <h3 className="text-base font-semibold text-foreground">{title}</h3>
         <p className="text-sm leading-6 text-muted-foreground">{description}</p>

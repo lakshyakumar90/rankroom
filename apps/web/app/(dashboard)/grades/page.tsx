@@ -77,6 +77,8 @@ export default function GradesPage() {
     user?.role === Role.CLASS_COORDINATOR ||
     user?.role === Role.TEACHER;
 
+  const isTeacher = user?.role === Role.TEACHER;
+
   const [selectedBatch, setSelectedBatch] = useState("");
   const [selectedSubject, setSelectedSubject] = useState("");
   const [examType, setExamType] = useState<ExamType>(ExamType.MID);
@@ -110,11 +112,28 @@ export default function GradesPage() {
     enabled: !!user && isStaff,
   });
 
+  // For teachers: fetch only their assigned subjects; for CC/admin/dept-head: all subjects in the section
+  interface TeachingAssignment { subject: { id: string; name: string; code: string }; section: { id: string } }
+  const { data: teachingAssignmentsData } = useQuery({
+    queryKey: ["teaching-assignments"],
+    queryFn: () => api.get<ApiResponse<TeachingAssignment[]>>("/api/profile/teaching-assignments"),
+    enabled: !!user && isTeacher,
+  });
+
   const { data: subjectsData } = useQuery({
     queryKey: ["subjects", selectedBatch, "grades"],
     queryFn: () => api.get<ApiResponse<SubjectOption[]>>(`/api/subjects/batch/${selectedBatch}`),
-    enabled: !!user && isStaff && !!selectedBatch,
+    enabled: !!user && isStaff && !!selectedBatch && !isTeacher,
   });
+
+  // For teachers: derive subjects from their assignments filtered by selected batch/section
+  const teacherSubjectsForBatch = useMemo(() => {
+    if (!isTeacher || !selectedBatch) return [];
+    const assignments = teachingAssignmentsData?.data ?? [];
+    return assignments
+      .filter((a) => a.section.id === selectedBatch)
+      .map((a) => a.subject);
+  }, [isTeacher, selectedBatch, teachingAssignmentsData]);
 
   const { data: enrollmentsData, isLoading: enrollmentsLoading } = useQuery({
     queryKey: ["grade-roster", selectedBatch],
@@ -169,7 +188,8 @@ export default function GradesPage() {
 
   const grades = data?.data ?? [];
   const classes = classesData?.data ?? [];
-  const subjects = subjectsData?.data ?? [];
+  // Teachers see only their assigned subjects for the selected section; others see all
+  const subjects = isTeacher ? teacherSubjectsForBatch : (subjectsData?.data ?? []);
   const roster = enrollmentsData?.data ?? [];
   const existingGrades = existingGradesData?.data ?? [];
   const cgpa = cgpaData?.data;

@@ -22,6 +22,7 @@ export interface AuthUser {
     userId: string;
     handle: string | null;
     bio: string | null;
+    phoneNumber: string | null;
     skills: string[];
     socialLinks: Record<string, string> | null;
     college: string | null;
@@ -55,10 +56,14 @@ export interface AuthUser {
     codeforcesRank: string | null;
     cgpa: number | null;
     activityHeatmap: Record<string, number>;
+    currentStreak: number;
+    longestStreak: number;
+    lastActiveDate: Date | null;
     lastSyncedAt: Date | null;
     bio: string | null;
     resumeUrl: string | null;
     resumeFilename: string | null;
+    avatarPath: string | null;
   } | null;
   enrollments?: Array<{
     id: string;

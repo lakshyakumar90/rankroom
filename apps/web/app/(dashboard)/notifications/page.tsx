@@ -28,6 +28,8 @@ function notifIcon(type: string) {
       return <Code2 className="size-4 text-accent-foreground" />;
     case "ENROLLMENT_ADDED":
       return <Users className="size-4 text-primary" />;
+    case "COACH_ADVICE_READY":
+      return <Trophy className="size-4 text-primary" />;
     default:
       return <Info className="size-4 text-muted-foreground" />;
   }
@@ -42,12 +44,12 @@ export default function NotificationsPage() {
   });
 
   const markReadMutation = useMutation({
-    mutationFn: (id: string) => api.patch(`/api/notifications/${id}/read`, {}),
+    mutationFn: (id: string) => api.put(`/api/notifications/${id}/read`, {}),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["notifications"] }),
   });
 
   const markAllReadMutation = useMutation({
-    mutationFn: () => api.patch("/api/notifications/read-all", {}),
+    mutationFn: () => api.put("/api/notifications/read-all", {}),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["notifications"] });
       toast.success("All notifications marked as read");
@@ -73,7 +75,7 @@ export default function NotificationsPage() {
         }
       />
 
-      <SectionCard className="p-0">
+      <SectionCard className="bg-background p-0">
         {isLoading ? (
           <div className="flex flex-col gap-3 p-5">
             {Array.from({ length: 8 }).map((_, index) => (
@@ -87,11 +89,11 @@ export default function NotificationsPage() {
                 key={notification.id}
                 className={cn(
                   "flex flex-col gap-4 p-5 transition-colors sm:flex-row sm:items-start sm:justify-between",
-                  !notification.isRead && "bg-accent/35"
+                  !notification.isRead ? "bg-primary/7" : "bg-background"
                 )}
               >
                 <div className="flex min-w-0 items-start gap-3">
-                  <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary">
+                  <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/8">
                     {notifIcon(notification.type)}
                   </div>
                   <div className="min-w-0">

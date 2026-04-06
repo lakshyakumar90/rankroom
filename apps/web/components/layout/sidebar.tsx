@@ -31,6 +31,7 @@ import {
   Trophy,
   Users,
   X,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 
@@ -69,17 +70,18 @@ const NAV_BY_ROLE: Record<Role, NavGroup[]> = {
       title: "Profile",
       items: [
         { href: "/hackathons", label: "Events", icon: CalendarDays },
-        { href: "/profile/edit", label: "Profile", icon: FolderKanban },
-        { href: "/notifications", label: "Notifications", icon: Bell },
+        { href: "/skills", label: "Skills", icon: Zap },
         { href: "/settings", label: "Settings", icon: Settings },
+        { href: "/notifications", label: "Notifications", icon: Bell },
       ],
     },
   ],
   TEACHER: [
     { title: "Overview", items: [{ href: "/dashboard", label: "Dashboard", icon: LayoutDashboard }] },
     {
-      title: "Teaching",
+      title: "My Classes",
       items: [
+        { href: "/sections", label: "My Sections", icon: Shield },
         { href: "/attendance/take", label: "Take Attendance", icon: ClipboardList },
         { href: "/grades", label: "Grades", icon: GraduationCap },
         { href: "/assignments", label: "Assignments", icon: BookOpen },
@@ -110,6 +112,7 @@ const NAV_BY_ROLE: Record<Role, NavGroup[]> = {
     {
       title: "Section Ops",
       items: [
+        { href: "/sections", label: "My Sections", icon: Shield },
         { href: "/attendance", label: "Attendance", icon: ClipboardList },
         { href: "/analytics", label: "Class Analytics", icon: BarChart3 },
         { href: "/leaderboard", label: "Leaderboard", icon: Award },
@@ -164,7 +167,6 @@ const NAV_BY_ROLE: Record<Role, NavGroup[]> = {
       title: "Operations",
       items: [
         { href: "/analytics", label: "Analytics", icon: BarChart3 },
-        { href: "/admin/classes", label: "Classes", icon: BookOpen },
         { href: "/contests/create", label: "Create Contest", icon: Trophy, permission: "contests:create" },
         { href: "/department/hackathons", label: "Manage Events", icon: Sparkles, permission: "hackathons:create" },
         { href: "/hackathons", label: "Hackathons", icon: CalendarDays },
@@ -187,7 +189,6 @@ const NAV_BY_ROLE: Record<Role, NavGroup[]> = {
       title: "Operations",
       items: [
         { href: "/analytics", label: "Analytics", icon: BarChart3 },
-        { href: "/admin/classes", label: "Classes", icon: BookOpen },
         { href: "/contests/create", label: "Create Contest", icon: Trophy, permission: "contests:create" },
         { href: "/department/hackathons", label: "Manage Events", icon: Sparkles, permission: "hackathons:create" },
         { href: "/hackathons", label: "Hackathons", icon: CalendarDays },
@@ -247,10 +248,10 @@ function SidebarNav({
                       onClick={onNavigate}
                       title={collapsed ? item.label : undefined}
                       className={cn(
-                        "flex items-center gap-3 px-3 py-2.5 text-sm font-medium transition-colors",
+                        "flex items-center gap-3 rounded-xl border border-transparent px-3 py-2.5 text-sm font-medium transition-colors",
                         active
-                          ? "bg-primary text-primary-foreground"
-                          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                          ? "border-primary/20 bg-primary text-primary-foreground shadow-sm"
+                          : "text-muted-foreground hover:border-border hover:bg-muted/70 hover:text-foreground",
                         collapsed && "justify-center px-2"
                       )}
                     >
@@ -282,7 +283,7 @@ function SidebarContent({
   if (!user) return null;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col bg-card/95 backdrop-blur">
       <div className={cn("flex items-center justify-between border-b border-border p-4", collapsed && "px-3")}>
         {!collapsed ? (
           <div className="flex items-center gap-3">
@@ -314,8 +315,8 @@ function SidebarContent({
         ) : null}
       </div>
 
-      <div className={cn("border-b border-border p-4", collapsed && "px-3")}>
-        <div className={cn("surface-inset flex items-center gap-3 p-3", collapsed && "justify-center")}>
+      <div className={cn("border-b border-border/80 p-4", collapsed && "px-3")}>
+        <div className={cn("surface-inset flex items-center gap-3 rounded-xl p-3", collapsed && "justify-center")}>
           <Avatar src={user.avatar} name={user.name} />
           {!collapsed ? (
             <div className="min-w-0 flex-1">
@@ -373,7 +374,7 @@ export function Sidebar({
             onClick={() => setMobileOpen(false)}
             aria-label="Close sidebar overlay"
           />
-          <aside className="fixed inset-y-0 left-0 z-50 w-[min(20rem,100vw)] overflow-hidden border-r border-border bg-card lg:hidden">
+          <aside className="fixed inset-y-0 left-0 z-50 w-[min(20rem,100vw)] overflow-hidden border-r border-border bg-card/95 backdrop-blur lg:hidden">
             <div className="flex items-center justify-end border-b border-border/70 p-3">
               <Button variant="ghost" size="icon" onClick={() => setMobileOpen(false)} aria-label="Close sidebar">
                 <X className="size-4" />
@@ -386,7 +387,7 @@ export function Sidebar({
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-30 hidden overflow-hidden border-r border-border bg-card lg:block",
+          "fixed inset-y-0 left-0 z-30 hidden overflow-hidden border-r border-border bg-card/95 backdrop-blur lg:block",
           collapsed ? "w-24" : "w-72"
         )}
       >

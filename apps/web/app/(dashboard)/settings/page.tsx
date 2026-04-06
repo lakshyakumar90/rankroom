@@ -1,277 +1,198 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Loader2 } from "lucide-react";
-import type { ApiResponse } from "@repo/types";
 import { useAuthStore } from "@/store/auth";
-import { api } from "@/lib/api";
-import { toast } from "sonner";
-import { Avatar } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { User, GraduationCap, Code2, ShieldAlert } from "lucide-react";
+import { Role } from "@repo/types";
+import { NotificationSettings } from "@/components/settings/NotificationSettings";
+import { TeacherSettingsForm } from "@/components/settings/TeacherSettingsForm";
+import { AdminSettingsForm } from "@/components/settings/AdminSettingsForm";
+import { PageContainer, PageHeader } from "@/components/common/page-shell";
+import ProfileEditPage from "@/components/settings/ProfileEditForm";
+import {
+  User,
+  Code2,
+  Zap,
+  FolderKanban,
+  Trophy,
+  FileText,
+  ShieldCheck,
+  Bell,
+  GraduationCap,
+  Building2,
+} from "lucide-react";
 
 export default function SettingsPage() {
-  const { user, setUser } = useAuthStore();
-  const [name, setName] = useState(user?.name ?? "");
-  const [bio, setBio] = useState("");
-  const [handle, setHandle] = useState(user?.profile?.handle ?? "");
-  const [githubUsername, setGithubUsername] = useState(user?.githubUsername ?? "");
-  const [college, setCollege] = useState(user?.profile?.college ?? "");
-  const [batch, setBatch] = useState(user?.profile?.batch ?? "");
-  const [department, setDepartment] = useState(user?.profile?.department ?? "");
-  const [isPublic, setIsPublic] = useState(user?.profile?.isPublic ?? false);
-  const [loading, setLoading] = useState(false);
+  const { user } = useAuthStore();
 
-  const isStudent = user?.role === "STUDENT";
-  const primaryEnrollment = user?.enrollments?.[0]?.section;
-  const canEditAcademicIdentity = !isStudent;
-
-  useEffect(() => {
-    setName(user?.name ?? "");
-    setHandle(user?.profile?.handle ?? "");
-    setGithubUsername(user?.githubUsername ?? "");
-    setCollege(user?.profile?.college ?? "");
-    setBatch(user?.profile?.batch ?? "");
-    setDepartment(user?.profile?.department ?? "");
-    setIsPublic(user?.profile?.isPublic ?? false);
-  }, [user]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadProfile() {
-      try {
-        const me = await api.get<
-          ApiResponse<{
-            name: string;
-            githubUsername?: string | null;
-            profile?: {
-              handle?: string | null;
-              bio?: string | null;
-              isPublic: boolean;
-              college?: string | null;
-              batch?: string | null;
-              department?: string | null;
-            } | null;
-          }>
-        >("/api/auth/me");
-
-        if (cancelled || !me.data) return;
-
-        setName(me.data.name);
-        setHandle(me.data.profile?.handle ?? "");
-        setBio(me.data.profile?.bio ?? "");
-        setGithubUsername(me.data.githubUsername ?? "");
-        setCollege(me.data.profile?.college ?? "");
-        setBatch(me.data.profile?.batch ?? "");
-        setDepartment(me.data.profile?.department ?? "");
-        setIsPublic(me.data.profile?.isPublic ?? false);
-      } catch {
-        // fallback to store
-      }
-    }
-
-    void loadProfile();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const academicFields = useMemo(
-    () => [
-      { label: "Section", value: primaryEnrollment?.name ?? "Not assigned" },
-      { label: "Course / Code", value: primaryEnrollment?.code ?? "Not assigned" },
-      { label: "Department", value: primaryEnrollment?.department?.name ?? (department || "Not assigned") },
-      { label: "Sessional year", value: primaryEnrollment?.academicYear ?? (batch || "Not assigned") },
-    ],
-    [batch, department, primaryEnrollment]
-  );
-
-  async function handleSave() {
-    setLoading(true);
-    try {
-      await api.patch("/api/auth/profile", {
-        name,
-        handle,
-        bio,
-        githubUsername,
-        college,
-        batch,
-        department,
-        isPublic,
-      });
-      const me = await api.get<ApiResponse<NonNullable<typeof user>>>("/api/auth/me");
-      if (me.data) setUser(me.data as Parameters<typeof setUser>[0]);
-      toast.success("Settings updated");
-    } catch {
-      toast.error("Failed to update settings");
-    } finally {
-      setLoading(false);
-    }
-  }
+  const isTeacher = user?.role === Role.TEACHER;
+  const isDeptHead = user?.role === Role.DEPARTMENT_HEAD;
+  const isAdmin = user?.role === Role.ADMIN || user?.role === Role.SUPER_ADMIN;
 
   return (
-    <div className="mx-auto max-w-5xl p-6">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">Account Settings</h1>
-        <p className="text-muted-foreground mt-1">Manage your profile, academic identity, and preferences.</p>
-      </div>
+    <PageContainer>
+      <PageHeader
+        eyebrow="Account"
+        title="Settings"
+        description="Manage your profile, preferences, and role-specific options."
+      />
 
-      <Tabs defaultValue="general" className="flex flex-col md:flex-row gap-8">
-        <TabsList className="flex md:flex-col h-auto justify-start self-start bg-transparent p-0 w-full md:w-56 gap-1 md:border-r border-border md:pr-6 pb-4 md:pb-0 overflow-x-auto">
-          <TabsTrigger value="general" className="justify-start data-[state=active]:bg-muted data-[state=active]:text-foreground text-muted-foreground px-4 py-2.5 w-full text-left gap-2 rounded-lg">
-            <User className="size-4" /> General Profile
+      <Tabs
+        defaultValue="basic"
+        orientation="vertical"
+        className="mt-8 grid gap-6 md:grid-cols-[16rem_minmax(0,1fr)] md:items-start md:gap-8"
+      >
+        <TabsList className="flex h-auto w-full shrink-0 flex-col justify-start gap-1 rounded-2xl border border-border/50 bg-background/80 p-3 backdrop-blur md:sticky md:top-24 md:max-h-[calc(100vh-7rem)] md:w-64 md:overflow-y-auto">
+          <div className="px-3 py-2">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/70">
+              Profile
+            </p>
+          </div>
+          <TabsTrigger
+            value="basic"
+            className="w-full justify-start gap-2.5 rounded-xl border border-transparent px-3 py-2 text-sm font-medium transition-all data-[state=active]:border-border data-[state=active]:bg-muted/80 data-[state=active]:shadow-none hover:bg-muted/50"
+          >
+            <User className="size-4" />
+            Basic Info
           </TabsTrigger>
-          <TabsTrigger value="academic" className="justify-start data-[state=active]:bg-muted data-[state=active]:text-foreground text-muted-foreground px-4 py-2.5 w-full text-left gap-2 rounded-lg">
-            <GraduationCap className="size-4" /> Academic Info
+          <TabsTrigger
+            value="platforms"
+            className="w-full justify-start gap-2.5 rounded-xl border border-transparent px-3 py-2 text-sm font-medium transition-all data-[state=active]:border-border data-[state=active]:bg-muted/80 data-[state=active]:shadow-none hover:bg-muted/50"
+          >
+            <Code2 className="size-4" />
+            Coding Platforms
           </TabsTrigger>
-          <TabsTrigger value="developer" className="justify-start data-[state=active]:bg-muted data-[state=active]:text-foreground text-muted-foreground px-4 py-2.5 w-full text-left gap-2 rounded-lg">
-            <Code2 className="size-4" /> Developer Data
+          <TabsTrigger
+            value="skills"
+            className="w-full justify-start gap-2.5 rounded-xl border border-transparent px-3 py-2 text-sm font-medium transition-all data-[state=active]:border-border data-[state=active]:bg-muted/80 data-[state=active]:shadow-none hover:bg-muted/50"
+          >
+            <Zap className="size-4" />
+            Skills
           </TabsTrigger>
+          <TabsTrigger
+            value="projects"
+            className="w-full justify-start gap-2.5 rounded-xl border border-transparent px-3 py-2 text-sm font-medium transition-all data-[state=active]:border-border data-[state=active]:bg-muted/80 data-[state=active]:shadow-none hover:bg-muted/50"
+          >
+            <FolderKanban className="size-4" />
+            Projects
+          </TabsTrigger>
+          <TabsTrigger
+            value="achievements"
+            className="w-full justify-start gap-2.5 rounded-xl border border-transparent px-3 py-2 text-sm font-medium transition-all data-[state=active]:border-border data-[state=active]:bg-muted/80 data-[state=active]:shadow-none hover:bg-muted/50"
+          >
+            <Trophy className="size-4" />
+            Achievements
+          </TabsTrigger>
+          <TabsTrigger
+            value="resume"
+            className="w-full justify-start gap-2.5 rounded-xl border border-transparent px-3 py-2 text-sm font-medium transition-all data-[state=active]:border-border data-[state=active]:bg-muted/80 data-[state=active]:shadow-none hover:bg-muted/50"
+          >
+            <FileText className="size-4" />
+            Resume
+          </TabsTrigger>
+          <TabsTrigger
+            value="privacy"
+            className="w-full justify-start gap-2.5 rounded-xl border border-transparent px-3 py-2 text-sm font-medium transition-all data-[state=active]:border-border data-[state=active]:bg-muted/80 data-[state=active]:shadow-none hover:bg-muted/50"
+          >
+            <ShieldCheck className="size-4" />
+            Privacy
+          </TabsTrigger>
+
+          <div className="mt-4 px-3 py-2 border-t border-border/50 pt-6">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/70">
+              Account
+            </p>
+          </div>
+          <TabsTrigger
+            value="notifications"
+            className="w-full justify-start gap-2.5 rounded-xl border border-transparent px-3 py-2 text-sm font-medium transition-all data-[state=active]:border-border data-[state=active]:bg-muted/80 data-[state=active]:shadow-none hover:bg-muted/50"
+          >
+            <Bell className="size-4" />
+            Notifications
+          </TabsTrigger>
+
+          {(isTeacher || isDeptHead || isAdmin) && (
+            <>
+              <div className="mt-4 px-3 py-2 border-t border-border/50 pt-6">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/70">
+                  Management
+                </p>
+              </div>
+              {isTeacher && (
+                <TabsTrigger
+                  value="academic"
+                  className="w-full justify-start gap-2.5 rounded-xl border border-transparent px-3 py-2 text-sm font-medium transition-all data-[state=active]:border-border data-[state=active]:bg-muted/80 data-[state=active]:shadow-none hover:bg-muted/50"
+                >
+                  <GraduationCap className="size-4" />
+                  Academic Hub
+                </TabsTrigger>
+              )}
+              {(isDeptHead || isAdmin) && (
+                <TabsTrigger
+                  value="platform"
+                  className="w-full justify-start gap-2.5 rounded-xl border border-transparent px-3 py-2 text-sm font-medium transition-all data-[state=active]:border-border data-[state=active]:bg-muted/80 data-[state=active]:shadow-none hover:bg-muted/50"
+                >
+                  <Building2 className="size-4" />
+                  Platform Admin
+                </TabsTrigger>
+              )}
+            </>
+          )}
         </TabsList>
 
-        <div className="flex-1 space-y-6">
-          {/* General Tab */}
-          <TabsContent value="general" className="mt-0 space-y-6 animate-in fade-in-50">
-            <Card className="border-border/50 shadow-sm">
-              <CardHeader>
-                <CardTitle>Public Profile</CardTitle>
-                <CardDescription>This is how others will see you on the platform.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="flex items-center gap-5 rounded-xl border border-border/50 bg-muted/20 p-5">
-                  <Avatar src={user?.avatar} name={user?.name} size="lg" className="size-16" />
-                  <div>
-                    <p className="text-lg font-semibold">{user?.name}</p>
-                    <p className="text-sm text-muted-foreground">{user?.email}</p>
-                    <div className="mt-2 text-xs uppercase tracking-widest text-primary font-semibold">{user?.role?.replaceAll("_", " ")}</div>
-                  </div>
-                </div>
-
-                <div className="grid gap-5 md:grid-cols-2">
-                  <Field label="Full name" htmlFor="name">
-                    <Input id="name" value={name} onChange={(event) => setName(event.target.value)} disabled={!canEditAcademicIdentity && isStudent} />
-                  </Field>
-                  <Field label="Public handle" htmlFor="handle">
-                    <Input id="handle" value={handle} onChange={(event) => setHandle(event.target.value)} placeholder="@username" />
-                  </Field>
-                </div>
-
-                <Field label="Bio" htmlFor="bio">
-                  <Textarea id="bio" value={bio} onChange={(event) => setBio(event.target.value)} placeholder="A short description about yourself" className="resize-none" rows={4} />
-                </Field>
-
-                <div className="flex items-center justify-between rounded-xl border border-border/50 bg-muted/10 p-5">
-                  <div className="space-y-0.5">
-                    <Label className="text-base">Public Visibility</Label>
-                    <p className="text-sm text-muted-foreground">Make your profile accessible to anyone via your handle.</p>
-                  </div>
-                  <Switch checked={isPublic} onCheckedChange={setIsPublic} aria-label="Toggle public profile" />
-                </div>
-              </CardContent>
-            </Card>
+        <div className="min-w-0 max-w-4xl md:col-start-2">
+          <TabsContent value="basic" className="m-0">
+            <div className="bg-card w-full rounded-2xl border border-border p-6 md:p-8 overflow-hidden">
+              <ProfileEditPage initialTab="basic" />
+            </div>
+          </TabsContent>
+          <TabsContent value="platforms" className="m-0">
+            <div className="bg-card w-full rounded-2xl border border-border p-6 md:p-8 overflow-hidden">
+              <ProfileEditPage initialTab="platforms" />
+            </div>
+          </TabsContent>
+          <TabsContent value="skills" className="m-0">
+            <div className="bg-card w-full rounded-2xl border border-border p-6 md:p-8 overflow-hidden">
+              <ProfileEditPage initialTab="skills" />
+            </div>
+          </TabsContent>
+          <TabsContent value="projects" className="m-0">
+            <div className="bg-card w-full rounded-2xl border border-border p-6 md:p-8 overflow-hidden">
+              <ProfileEditPage initialTab="projects" />
+            </div>
+          </TabsContent>
+          <TabsContent value="achievements" className="m-0">
+            <div className="bg-card w-full rounded-2xl border border-border p-6 md:p-8 overflow-hidden">
+              <ProfileEditPage initialTab="achievements" />
+            </div>
+          </TabsContent>
+          <TabsContent value="resume" className="m-0">
+            <div className="bg-card w-full rounded-2xl border border-border p-6 md:p-8 overflow-hidden">
+              <ProfileEditPage initialTab="resume" />
+            </div>
+          </TabsContent>
+          <TabsContent value="privacy" className="m-0">
+            <div className="bg-card w-full rounded-2xl border border-border p-6 md:p-8 overflow-hidden">
+              <ProfileEditPage initialTab="privacy" />
+            </div>
           </TabsContent>
 
-          {/* Academic Tab */}
-          <TabsContent value="academic" className="mt-0 space-y-6 animate-in fade-in-50">
-            <Card className="border-border/50 shadow-sm">
-              <CardHeader>
-                <CardTitle>Academic Enrollment</CardTitle>
-                <CardDescription>Your registered academic details.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="grid gap-4 md:grid-cols-2">
-                  {academicFields.map((field) => (
-                    <div key={field.label} className="rounded-xl border border-border/50 bg-muted/20 p-4">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{field.label}</p>
-                      <p className="mt-1.5 font-medium">{field.value}</p>
-                    </div>
-                  ))}
-                </div>
-                {isStudent && (
-                  <div className="flex items-start gap-3 rounded-xl border border-blue-500/20 bg-blue-500/10 p-4 text-blue-600 dark:text-blue-400">
-                    <ShieldAlert className="mt-0.5 size-4 shrink-0" />
-                    <p className="text-sm leading-relaxed">
-                      Core academic fields are managed by administrators. Please contact your coordinator to update section or department mappings.
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card className="border-border/50 shadow-sm">
-              <CardHeader>
-                <CardTitle>Academic Descriptors</CardTitle>
-                <CardDescription>Additional context for your institution.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <Field label="College / Institute" htmlFor="college">
-                  <Input id="college" value={college} onChange={(event) => setCollege(event.target.value)} />
-                </Field>
-                <div className="grid gap-5 md:grid-cols-2">
-                  <Field label="Batch / Session" htmlFor="batch">
-                    <Input id="batch" value={batch} onChange={(event) => setBatch(event.target.value)} disabled={!canEditAcademicIdentity} />
-                  </Field>
-                  <Field label="Department Alias" htmlFor="department">
-                    <Input id="department" value={department} onChange={(event) => setDepartment(event.target.value)} disabled={!canEditAcademicIdentity} />
-                  </Field>
-                </div>
-              </CardContent>
-            </Card>
+          <TabsContent value="notifications" className="m-0">
+            <NotificationSettings />
           </TabsContent>
 
-          {/* Developer Tab */}
-          <TabsContent value="developer" className="mt-0 space-y-6 animate-in fade-in-50">
-            <Card className="border-border/50 shadow-sm">
-              <CardHeader>
-                <CardTitle>Developer Integrations</CardTitle>
-                <CardDescription>Connect external platforms to showcase your experience.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <Field label="GitHub Username" htmlFor="github">
-                  <div className="flex">
-                    <span className="inline-flex items-center rounded-l-md border border-r-0 border-border bg-muted/50 px-3 text-sm text-muted-foreground">github.com/</span>
-                    <Input id="github" value={githubUsername} onChange={(event) => setGithubUsername(event.target.value)} className="rounded-l-none" />
-                  </div>
-                </Field>
-                <p className="text-xs text-muted-foreground p-3 rounded-lg bg-muted/30 border border-border/50">
-                  Linking your GitHub account enables activity syncing with the platform heatmap.
-                </p>
-              </CardContent>
-            </Card>
-          </TabsContent>
+          {isTeacher && (
+            <TabsContent value="academic" className="m-0">
+              <TeacherSettingsForm />
+            </TabsContent>
+          )}
 
-          <div className="flex justify-end pt-4">
-            <Button onClick={handleSave} disabled={loading} className="px-8 font-medium">
-              {loading && <Loader2 className="mr-2 size-4 animate-spin" />}
-              Save Changes
-            </Button>
-          </div>
+          {(isDeptHead || isAdmin) && (
+            <TabsContent value="platform" className="m-0">
+              <AdminSettingsForm />
+            </TabsContent>
+          )}
         </div>
       </Tabs>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  htmlFor,
-  children,
-}: {
-  label: string;
-  htmlFor: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-2">
-      <Label htmlFor={htmlFor}>{label}</Label>
-      {children}
-    </div>
+    </PageContainer>
   );
 }

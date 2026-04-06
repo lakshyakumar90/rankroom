@@ -203,7 +203,7 @@ function TeacherAssignmentRow({ assignment }: { assignment: AssignmentListItem }
           <p>{assignment.title}</p>
           <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
             <Users className="size-3" />
-            {assignment._count.submissions} submitted
+            {assignment._count?.submissions ?? 0} submitted
           </div>
         </div>
       </TableCell>
@@ -262,29 +262,45 @@ function StudentAssignmentRow({
         )}
       </TableCell>
       <TableCell className="text-right">
-        {hasSubmission ? (
-          <div className="flex justify-end">
-            <Button variant="outline" size="sm" asChild>
-              <a href={assignment.mySubmission!.fileUrl ?? undefined} target="_blank" rel="noreferrer">
-                View Submission
-              </a>
-            </Button>
-          </div>
-        ) : isPast ? (
-          <span className="text-xs text-muted-foreground">Closed</span>
-        ) : (
-          <div className="flex items-center justify-end gap-2">
-            <Input
-              type="file"
-              onChange={(e) => onFileChange(assignment.id, e.target.files?.[0] ?? null)}
-              className="h-8 text-xs max-w-[150px]"
-            />
-            <Button onClick={() => onSubmit(assignment.id)} disabled={isSubmitting || !file} size="sm" className="gap-2">
-              <Upload className="size-3.5" />
-              Submit
-            </Button>
-          </div>
-        )}
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button variant="ghost" size="sm" asChild>
+            <Link href={`/assignments/${assignment.id}`}>
+              <ChevronRight className="size-3.5 mr-1" />
+              Details
+            </Link>
+          </Button>
+          {hasSubmission ? (
+            assignment.mySubmission!.fileUrl ? (
+              <Button variant="outline" size="sm" asChild>
+                <a href={assignment.mySubmission!.fileUrl} target="_blank" rel="noreferrer">
+                  View Submission
+                </a>
+              </Button>
+            ) : null
+          ) : isPast ? (
+            <span className="text-xs text-muted-foreground">Closed</span>
+          ) : (
+            <>
+              <input
+                id={`assignment-file-${assignment.id}`}
+                type="file"
+                onChange={(e) => onFileChange(assignment.id, e.target.files?.[0] ?? null)}
+                className="hidden"
+              />
+              <label
+                htmlFor={`assignment-file-${assignment.id}`}
+                className="inline-flex max-w-[190px] cursor-pointer items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs text-muted-foreground transition hover:bg-muted/60"
+              >
+                <Upload className="size-3.5 shrink-0" />
+                <span className="truncate">{file?.name ?? "Choose file"}</span>
+              </label>
+              <Button onClick={() => onSubmit(assignment.id)} disabled={isSubmitting || !file} size="sm" className="gap-2">
+                <Upload className="size-3.5" />
+                Submit
+              </Button>
+            </>
+          )}
+        </div>
       </TableCell>
     </TableRow>
   );
@@ -372,7 +388,7 @@ export default function AssignmentsPage() {
                 <Users className="size-5" />
               </div>
               <div>
-                <p className="text-2xl font-bold">{assignments.reduce((sum, a) => sum + a._count.submissions, 0)}</p>
+                <p className="text-2xl font-bold">{assignments.reduce((sum, a) => sum + (a._count?.submissions ?? 0), 0)}</p>
                 <p className="text-xs text-muted-foreground">Total submissions</p>
               </div>
             </CardContent>

@@ -1,6 +1,9 @@
 import { prisma } from "@repo/database";
+import { Role, type JWTPayload } from "@repo/types";
 import { emitLeaderboardUpdated } from "../lib/socket";
 import { AppError } from "../middleware/error";
+
+const STUDENT_TOP_LIMIT = 10;
 
 function clamp(value: number, min = 0, max = 100) {
   return Math.max(min, Math.min(max, value));
@@ -34,6 +37,159 @@ function getSortMetric(
     default:
       return entry.totalScore;
   }
+}
+
+function buildRestrictedLeaderboard<T extends { studentId?: string; userId?: string }>(
+  items: T[],
+  viewerId: string,
+  pagination: { page: number; limit: number; total: number; totalPages: number }
+) {
+  const topItems = items.slice(0, 10);
+  const self =
+    items.find((item) => (("studentId" in item ? item.studentId : item.userId) ?? null) === viewerId) ?? null;
+
+  return {
+    items: topItems,
+    self: self && !topItems.some((item) => item === self) ? self : null,
+    pagination: {
+      page: 1,
+      limit: Math.min(STUDENT_TOP_LIMIT, pagination.total),
+      total: pagination.total,
+      totalPages: 1,
+    },
+    viewerMode: "restricted" as const,
+  };
+}
+
+function getDerivedStreakScore(currentStreak: number | null | undefined) {
+  return round2(clamp((currentStreak ?? 0) * 4, 0, 100) * 0.05);
+}
+
+function mapScopedLeaderboardEntry(
+  entry: {
+    studentId: string;
+    rank: number | null;
+    previousRank?: number | null;
+    totalScore: number;
+    codingScore: number;
+    cgpaScore: number;
+    assignmentScore: number;
+    hackathonScore: number;
+    profileScore: number;
+    externalScore: number;
+    updatedAt?: Date;
+    lastComputedAt?: Date;
+    section?: { id: string; name: string; code: string } | null;
+    student: {
+      id: string;
+      name: string;
+      avatar: string | null;
+      role: string;
+      createdAt: Date;
+      email?: string;
+      githubUsername?: string | null;
+      profile?: { phoneNumber?: string | null } | null;
+      studentProfile?: {
+        currentStreak?: number;
+        longestStreak?: number;
+        lastActiveDate?: Date | null;
+      } | null;
+      leaderboard?: {
+        problemsSolved?: number;
+      } | null;
+    };
+  },
+  rank: number
+) {
+  const currentStreak = entry.student.studentProfile?.currentStreak ?? 0;
+  const longestStreak = entry.student.studentProfile?.longestStreak ?? 0;
+  const streakScore = getDerivedStreakScore(currentStreak);
+
+  return {
+    userId: entry.studentId,
+    studentId: entry.studentId,
+    rank,
+    previousRank: entry.previousRank ?? null,
+    totalScore: round2(entry.totalScore),
+    codingScore: round2(entry.codingScore),
+    cgpaScore: round2(entry.cgpaScore),
+    assignmentScore: round2(entry.assignmentScore),
+    hackathonScore: round2(entry.hackathonScore),
+    profileScore: round2(entry.profileScore),
+    externalScore: round2(entry.externalScore),
+    streakScore,
+    currentStreak,
+    longestStreak,
+    lastActiveDate: entry.student.studentProfile?.lastActiveDate?.toISOString() ?? null,
+    problemsSolved: entry.student.leaderboard?.problemsSolved ?? 0,
+    student: {
+      id: entry.student.id,
+      name: entry.student.name,
+      avatar: entry.student.avatar,
+      role: entry.student.role,
+      email: entry.student.email,
+      githubUsername: entry.student.githubUsername ?? null,
+      phoneNumber: entry.student.profile?.phoneNumber ?? null,
+      createdAt: entry.student.createdAt.toISOString(),
+    },
+    section: entry.section ?? undefined,
+    updatedAt: entry.updatedAt ?? entry.lastComputedAt ?? null,
+  };
+}
+
+function sortScopedEntries<T extends {
+  studentId?: string;
+  rank?: number | null;
+  previousRank?: number | null;
+  totalScore: number;
+  codingScore: number;
+  cgpaScore: number;
+  assignmentScore: number;
+  hackathonScore: number;
+  profileScore: number;
+  externalScore: number;
+  student: { name: string };
+}>(entries: T[], filter: "overall" | "coding" | "academic" | "profile" | "external") {
+  return [...entries].sort(
+    (a, b) => getSortMetric(b, filter) - getSortMetric(a, filter) || a.student.name.localeCompare(b.student.name)
+  );
+}
+
+function assignRanks(
+  entries: Array<{
+    studentId: string;
+    rank: number | null;
+    previousRank?: number | null;
+    totalScore: number;
+    codingScore: number;
+    cgpaScore: number;
+    assignmentScore: number;
+    hackathonScore: number;
+    profileScore: number;
+    externalScore: number;
+    updatedAt?: Date;
+    lastComputedAt?: Date;
+    section?: { id: string; name: string; code: string } | null;
+    student: {
+      id: string;
+      name: string;
+      avatar: string | null;
+      createdAt: Date;
+      role: string;
+      email?: string;
+      githubUsername?: string | null;
+      profile?: { phoneNumber?: string | null } | null;
+      studentProfile?: {
+        currentStreak?: number;
+        longestStreak?: number;
+        lastActiveDate?: Date | null;
+      } | null;
+      leaderboard?: { problemsSolved?: number } | null;
+    };
+  }>,
+  filter: "overall" | "coding" | "academic" | "profile" | "external"
+) {
+  return sortScopedEntries(entries, filter).map((entry, index) => mapScopedLeaderboardEntry(entry, index + 1));
 }
 
 async function getSectionStudents(sectionId: string) {
@@ -73,7 +229,7 @@ export async function recomputeSectionLeaderboard(sectionId: string) {
   const totalProblems = await prisma.problem.count({ where: { isPublished: true } });
   const totalAssignments = await prisma.assignment.count({ where: { subjectId: { in: subjectIds } } });
 
-  const [contestWins, gradeAverages, submissions, hackathonStats, attendanceData, contestParticipation] = await Promise.all([
+  const [contestWins, gradeAverages, submissions, hackathonStats, attendanceData, contestParticipation, certificateBonus] = await Promise.all([
     prisma.contestStanding.groupBy({
       by: ["userId"],
       where: {
@@ -117,6 +273,13 @@ export async function recomputeSectionLeaderboard(sectionId: string) {
       where: { userId: { in: studentIds } },
       _count: true,
       _sum: { totalScore: true },
+    }),
+
+    // Approved certificate XP bonuses per student
+    prisma.certificate.groupBy({
+      by: ["studentId"],
+      where: { studentId: { in: studentIds }, status: "APPROVED" },
+      _sum: { xpBonus: true },
     }),
   ]);
 
@@ -166,6 +329,11 @@ export async function recomputeSectionLeaderboard(sectionId: string) {
     entry.userId,
     { count: entry._count, totalScore: entry._sum.totalScore ?? 0 },
   ]));
+
+  // Certificate XP bonus map: studentId → total approved XP
+  const certBonusMap = new Map(
+    certificateBonus.map((entry) => [entry.studentId, entry._sum.xpBonus ?? 0])
+  );
 
   const rawExternalScores = section.enrollments.map((enrollment) => {
     const profile = enrollment.student.studentProfile;
@@ -242,12 +410,26 @@ export async function recomputeSectionLeaderboard(sectionId: string) {
       (studentProfile?.githubContributions ?? 0) * 0.1;
     const externalBase = maxExternal > 0 ? (externalRaw / maxExternal) * 100 : 0;
     const externalScore = clamp(externalBase) * 0.1;
+    const streakScore = getDerivedStreakScore(studentProfile?.currentStreak);
 
     // Participation boost: students in contests or hackathons get up to +10% multiplier
     const participationEvents = (hackathonStatsForStudent.registrations + contestStats.count);
     const participationBoost = participationEvents > 0 ? Math.min(1.1, 1 + participationEvents * 0.02) : 1;
 
-    const baseScore = cgpaScore + codingScore + assignmentScore + hackathonScore + profileScore + attendanceScore + externalScore;
+    // Certificate XP bonus — normalized to 0-10 points (cap at 1000 XP raw)
+    const rawCertBonus = certBonusMap.get(student.id) ?? 0;
+    const certScore = clamp((rawCertBonus / 1000) * 100) * 0.05;
+
+    const baseScore =
+      cgpaScore +
+      codingScore +
+      assignmentScore +
+      hackathonScore +
+      profileScore +
+      attendanceScore +
+      externalScore +
+      certScore +
+      streakScore;
     const totalScore = round2(baseScore * participationBoost);
 
     return {
@@ -259,6 +441,7 @@ export async function recomputeSectionLeaderboard(sectionId: string) {
       hackathonScore: round2(hackathonScore),
       profileScore: round2(profileScore),
       externalScore: round2(externalScore + attendanceScore), // externalScore stores combined external + attendance
+      streakScore,
       totalScore,
       previousRank: previousRanks.get(student.id) ?? null,
       student: {
@@ -318,7 +501,8 @@ export async function getSectionLeaderboard(
   filter: "overall" | "coding" | "academic" | "profile" | "external",
   search?: string,
   page = 1,
-  limit = 20
+  limit = 20,
+  viewer?: JWTPayload
 ) {
   const section = await prisma.section.findUnique({
     where: { id: sectionId },
@@ -337,7 +521,10 @@ export async function getSectionLeaderboard(
           id: true,
           name: true,
           avatar: true,
+          createdAt: true,
           role: true,
+          githubUsername: true,
+          profile: { select: { phoneNumber: true } },
           studentProfile: {
             include: {
               skills: true,
@@ -358,13 +545,16 @@ export async function getSectionLeaderboard(
       include: {
         student: {
           select: {
-            id: true,
-            name: true,
-            avatar: true,
-            role: true,
-            studentProfile: {
-              include: {
-                skills: true,
+          id: true,
+          name: true,
+          avatar: true,
+          createdAt: true,
+          role: true,
+          githubUsername: true,
+          profile: { select: { phoneNumber: true } },
+          studentProfile: {
+            include: {
+              skills: true,
                 projects: true,
                 achievements: true,
               },
@@ -376,29 +566,45 @@ export async function getSectionLeaderboard(
     });
   }
 
-  const sorted = entries
-    .map((entry) => ({
+  const ranked = assignRanks(
+    entries.map((entry) => ({
       ...entry,
       previousRank: null,
       problemsSolved: entry.student.leaderboard?.problemsSolved ?? 0,
       contestWins: 0,
-    }))
-    .sort((a, b) => getSortMetric(b, filter) - getSortMetric(a, filter) || a.student.name.localeCompare(b.student.name));
+    })),
+    filter
+  );
 
   const start = (page - 1) * limit;
   const end = start + limit;
 
-  return {
+  const response = {
     section,
+    scope: "section" as const,
+    scopeId: sectionId,
     filter,
-    items: sorted.slice(start, end),
+    items: ranked.slice(start, end),
     pagination: {
       page,
       limit,
-      total: sorted.length,
-      totalPages: Math.ceil(sorted.length / limit),
+      total: ranked.length,
+      totalPages: Math.ceil(ranked.length / limit),
     },
-    lastUpdatedAt: sorted[0]?.updatedAt ?? null,
+    lastUpdatedAt: ranked[0]?.updatedAt ?? null,
+  };
+
+  if (viewer?.role === Role.STUDENT) {
+    return {
+      ...response,
+      ...buildRestrictedLeaderboard(ranked, viewer.id, response.pagination),
+    };
+  }
+
+  return {
+    ...response,
+    self: null,
+    viewerMode: "full" as const,
   };
 }
 
@@ -407,7 +613,8 @@ export async function getDepartmentLeaderboard(
   filter: "overall" | "coding" | "academic" | "profile" | "external",
   search?: string,
   page = 1,
-  limit = 20
+  limit = 20,
+  viewer?: JWTPayload
 ) {
   const entries = await prisma.sectionLeaderboard.findMany({
     where: {
@@ -421,12 +628,18 @@ export async function getDepartmentLeaderboard(
           id: true,
           name: true,
           avatar: true,
+          createdAt: true,
           role: true,
+          githubUsername: true,
+          profile: { select: { phoneNumber: true } },
           studentProfile: {
             select: {
               cgpa: true,
               leetcodeSolved: true,
               githubContributions: true,
+              currentStreak: true,
+              longestStreak: true,
+              lastActiveDate: true,
             },
           },
           leaderboard: true,
@@ -435,46 +648,262 @@ export async function getDepartmentLeaderboard(
     },
   });
 
-  const sorted = entries.sort((a, b) => getSortMetric(b, filter) - getSortMetric(a, filter));
+  const deduped = Array.from(
+    new Map(entries.map((entry) => [entry.studentId, entry])).values()
+  );
+  const ranked = assignRanks(deduped, filter);
   const start = (page - 1) * limit;
   const end = start + limit;
 
-  return {
+  const response = {
     filter,
-    items: sorted.slice(start, end),
+    scope: "department" as const,
+    scopeId: departmentId,
+    items: ranked.slice(start, end),
     pagination: {
       page,
       limit,
-      total: sorted.length,
-      totalPages: Math.ceil(sorted.length / limit),
+      total: ranked.length,
+      totalPages: Math.ceil(ranked.length / limit),
     },
+    lastUpdatedAt: ranked[0]?.updatedAt ?? null,
+  };
+
+  if (viewer?.role === Role.STUDENT) {
+    return {
+      ...response,
+      ...buildRestrictedLeaderboard(ranked, viewer.id, response.pagination),
+    };
+  }
+
+  return {
+    ...response,
+    self: null,
+    viewerMode: "full" as const,
   };
 }
 
-export async function getPlatformLeaderboard(page = 1, limit = 50) {
-  const skip = (page - 1) * limit;
-  const [entries, total] = await Promise.all([
-    prisma.leaderboard.findMany({
-      include: {
-        user: {
-          select: { id: true, name: true, avatar: true, githubUsername: true, role: true, email: true, createdAt: true },
+export async function getPlatformLeaderboard(page = 1, limit = 50, viewer?: JWTPayload) {
+  const entries = await prisma.sectionLeaderboard.findMany({
+    include: {
+      section: { select: { id: true, name: true, code: true } },
+      student: {
+        select: {
+          id: true,
+          name: true,
+          avatar: true,
+          createdAt: true,
+          role: true,
+          email: true,
+          githubUsername: true,
+          profile: { select: { phoneNumber: true } },
+          studentProfile: {
+            select: {
+              currentStreak: true,
+              longestStreak: true,
+              lastActiveDate: true,
+            },
+          },
+          leaderboard: true,
         },
       },
-      orderBy: { totalPoints: "desc" },
-      skip,
-      take: limit,
-    }),
-    prisma.leaderboard.count(),
-  ]);
+    },
+  });
 
-  return {
-    items: entries,
+  const deduped = Array.from(new Map(entries.map((entry) => [entry.studentId, entry])).values());
+  const ranked = assignRanks(deduped, "overall");
+  const start = (page - 1) * limit;
+  const end = start + limit;
+
+  const response = {
+    scope: "global" as const,
+    scopeId: null,
+    filter: "overall" as const,
+    items: ranked.slice(start, end),
     pagination: {
       page,
       limit,
-      total,
-      totalPages: Math.ceil(total / limit),
+      total: ranked.length,
+      totalPages: Math.ceil(ranked.length / limit),
     },
+    lastUpdatedAt: ranked[0]?.updatedAt ?? null,
+  };
+
+  if (viewer?.role === Role.STUDENT) {
+    return {
+      ...response,
+      ...buildRestrictedLeaderboard(ranked, viewer.id, response.pagination),
+    };
+  }
+
+  return {
+    ...response,
+    self: null,
+    viewerMode: "full" as const,
+  };
+}
+
+export async function getStudentLeaderboardSummary(userId: string) {
+  const enrollment = await prisma.enrollment.findFirst({
+    where: { studentId: userId },
+    include: {
+      section: {
+        include: {
+          department: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+            },
+          },
+        },
+      },
+    },
+    orderBy: { enrolledAt: "desc" },
+  });
+
+  if (!enrollment?.sectionId) {
+    return {
+      section: null,
+      department: null,
+      global: null,
+      sectionRank: null,
+      departmentRank: null,
+      points: 0,
+      solved: 0,
+      streak: 0,
+      avatar: null,
+      student: null,
+    };
+  }
+
+  let scopedEntry = await prisma.sectionLeaderboard.findUnique({
+    where: {
+      sectionId_studentId: {
+        sectionId: enrollment.sectionId,
+        studentId: userId,
+      },
+    },
+    include: {
+      student: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          avatar: true,
+          createdAt: true,
+          role: true,
+          githubUsername: true,
+          profile: { select: { phoneNumber: true } },
+          studentProfile: {
+            select: {
+              currentStreak: true,
+              longestStreak: true,
+              lastActiveDate: true,
+            },
+          },
+          leaderboard: true,
+        },
+      },
+      section: {
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          department: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!scopedEntry) {
+    await recomputeSectionLeaderboard(enrollment.sectionId);
+    scopedEntry = await prisma.sectionLeaderboard.findUnique({
+      where: {
+        sectionId_studentId: {
+          sectionId: enrollment.sectionId,
+          studentId: userId,
+        },
+      },
+      include: {
+        student: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            avatar: true,
+            createdAt: true,
+            role: true,
+            githubUsername: true,
+            profile: { select: { phoneNumber: true } },
+            studentProfile: {
+              select: {
+                currentStreak: true,
+                longestStreak: true,
+                lastActiveDate: true,
+              },
+            },
+            leaderboard: true,
+          },
+        },
+        section: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            department: {
+              select: {
+                id: true,
+                name: true,
+                code: true,
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  if (!scopedEntry) {
+    return {
+      section: enrollment.section,
+      department: enrollment.section.department,
+      global: null,
+      sectionRank: null,
+      departmentRank: null,
+      points: 0,
+      solved: 0,
+      streak: 0,
+      avatar: null,
+      student: null,
+    };
+  }
+
+  const [globalLeaderboard, departmentLeaderboard] = await Promise.all([
+    getPlatformLeaderboard(1, 5000),
+    getDepartmentLeaderboard(enrollment.section.department.id, "overall", undefined, 1, 5000),
+  ]);
+
+  const globalSelf = globalLeaderboard.items.find((entry) => entry.studentId === userId) ?? null;
+  const departmentSelf = departmentLeaderboard.items.find((entry) => entry.studentId === userId) ?? null;
+
+  return {
+    section: scopedEntry.section,
+    department: scopedEntry.section.department,
+    global: globalSelf,
+    sectionRank: scopedEntry.rank,
+    departmentRank: departmentSelf?.rank ?? null,
+    points: scopedEntry.totalScore,
+    solved: scopedEntry.student.leaderboard?.problemsSolved ?? 0,
+    streak: scopedEntry.student.studentProfile?.currentStreak ?? 0,
+    avatar: scopedEntry.student.avatar,
+    student: mapScopedLeaderboardEntry(scopedEntry, scopedEntry.rank ?? 0),
   };
 }
 
@@ -498,11 +927,11 @@ export async function getLeaderboardInsights(sectionId: string) {
   }));
 
   const trendingStudents = data.items
-    .filter((item) => (item.previousRank !== null && (item.rank ?? 999) < item.previousRank) || item.hackathonScore > 30)
+    .filter((item) => ((item as { previousRank?: number | null }).previousRank !== null && (item.rank ?? 999) < ((item as { previousRank?: number | null }).previousRank ?? 999)) || item.hackathonScore > 30)
     .slice(0, 3)
     .map((item) => ({
       name: item.student.name,
-      rankImprovement: item.previousRank ? item.previousRank - (item.rank ?? 0) : "Rising",
+      rankImprovement: (item as { previousRank?: number | null }).previousRank ? ((item as { previousRank?: number | null }).previousRank ?? 0) - (item.rank ?? 0) : "Rising",
       codingScore: item.codingScore,
     }));
 
@@ -554,21 +983,23 @@ Format your response as valid JSON strictly matching this schema:
       "X-Title": "RankRoom AI Leaderboard Analytics",
     },
     body: JSON.stringify({
-      model: process.env.OPENROUTER_MODEL ?? "google/gemini-flash-1.5",
+      model: process.env.OPENROUTER_MODEL ?? "stepfun/step-3.5-flash:free",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      response_format: { type: "json_object" },
+      temperature: 0.3,
     }),
   });
 
   if (!response.ok) {
+    const errorText = await response.text();
+    console.error("OpenRouter leaderboard error:", errorText);
     throw new AppError("Failed to fetch AI insights", 502);
   }
 
   const result = await response.json();
-  const rawText = result.choices[0]?.message?.content ?? "{}";
+  const rawText = result.choices?.[0]?.message?.content ?? "{}";
   
   let insightsParsed;
   try {

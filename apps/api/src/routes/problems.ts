@@ -1,14 +1,31 @@
 import { Router, type Router as ExpressRouter } from "express";
-import { prisma } from "@repo/database";
+import { prisma, Prisma } from "@repo/database";
 import { authenticate, requireRole, optionalAuth } from "../middleware/auth";
 import { requirePermission } from "../middleware/permissions";
 import { validate } from "../middleware/validate";
 import { AppError } from "../middleware/error";
 import { createProblemSchema, createTestCaseSchema, bulkCreateTestCasesSchema, paginationSchema } from "@repo/validators";
-import { LANGUAGE_IDS, pollResult, runBatch, submitToJudge0, toTestResult } from "../services/judge.service";
+import { runBatch, toTestResult } from "../services/judge.service";
+import { executeSubmissionCases, normalizeExecutionSource } from "../services/execution.service";
+import { generateHint, getAiAssist } from "../services/ai-assist.service";
 import { submissionQueue } from "../jobs/submissionWorker";
 import { Role, type Verdict } from "@repo/types";
 import { z } from "zod";
+import { getJudge0LanguageId } from "../lib/judge0-languages";
+import {
+  mapScopeToVisibility,
+  mapVisibilityToScope,
+  normalizeBoilerplates,
+  normalizeTagRefs,
+} from "../lib/problem-normalization";
+import {
+  byteLengthUtf8,
+  MAX_SOURCE_CODE_BYTES,
+  MAX_STDIN_BYTES,
+  MAX_TEST_CASES_PER_RUN,
+  MAX_TEST_CASES_PER_SUBMIT,
+  TS_EXECUTION_MODE,
+} from "../config/execution";
 
 const router: ExpressRouter = Router();
 
@@ -17,6 +34,7 @@ const problemFiltersSchema = paginationSchema.extend({
   tag: z.union([z.string(), z.array(z.string())]).optional(),
   search: z.string().optional(),
   status: z.enum(["solved", "attempted", "unsolved"]).optional(),
+  visibility: z.enum(["GLOBAL", "DEPARTMENT", "CLASS", "CONTEST_ONLY", "ASSIGNMENT_ONLY"]).optional(),
 });
 
 const runSchema = z.object({
@@ -30,15 +48,34 @@ const submitSchema = z.object({
   language: z.string().min(1),
 });
 
+const ALLOWED_PROBLEM_LANGUAGES = ["python", "cpp", "c"] as const;
+
+function isAllowedProblemLanguage(language: string): language is (typeof ALLOWED_PROBLEM_LANGUAGES)[number] {
+  return ALLOWED_PROBLEM_LANGUAGES.includes(language as (typeof ALLOWED_PROBLEM_LANGUAGES)[number]);
+}
+
+const boilerplateUpsertSchema = z.object({
+  language: z.string().min(1),
+  code: z.string().min(1),
+});
+
+function enforceSourceAndInputLimits(sourceCode: string, stdin?: string) {
+  if (byteLengthUtf8(sourceCode) > MAX_SOURCE_CODE_BYTES) {
+    throw new AppError(`source_code exceeds ${MAX_SOURCE_CODE_BYTES} bytes`, 400);
+  }
+
+  if (stdin !== undefined && byteLengthUtf8(stdin) > MAX_STDIN_BYTES) {
+    throw new AppError(`stdin exceeds ${MAX_STDIN_BYTES} bytes`, 400);
+  }
+}
+
 const STARTER_SOLUTIONS: Record<string, Partial<Record<string, string>>> = {
   "two-sum-stream": {
     python: "def solve():\n    import sys\n    data = sys.stdin.read().strip().split()\n    if not data:\n        return\n    n = int(data[0])\n    nums = list(map(int, data[1:1 + n]))\n    target = int(data[1 + n])\n    seen = set()\n    for value in nums:\n        if target - value in seen:\n            print('YES')\n            return\n        seen.add(value)\n    print('NO')\n\nif __name__ == '__main__':\n    solve()\n",
-    javascript: "const fs = require('fs');\nconst tokens = fs.readFileSync(0, 'utf8').trim().split(/\\s+/);\nif (tokens.length) {\n  const n = Number(tokens[0]);\n  const nums = tokens.slice(1, 1 + n).map(Number);\n  const target = Number(tokens[1 + n]);\n  const seen = new Set();\n  let ok = false;\n  for (const value of nums) {\n    if (seen.has(target - value)) { ok = true; break; }\n    seen.add(value);\n  }\n  process.stdout.write(ok ? 'YES' : 'NO');\n}\n",
     cpp: "#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n  ios::sync_with_stdio(false);\n  cin.tie(nullptr);\n  int n;\n  if (!(cin >> n)) return 0;\n  vector<int> nums(n);\n  for (int i = 0; i < n; ++i) cin >> nums[i];\n  int target;\n  cin >> target;\n  unordered_set<int> seen;\n  for (int value : nums) {\n    if (seen.count(target - value)) {\n      cout << \"YES\";\n      return 0;\n    }\n    seen.insert(value);\n  }\n  cout << \"NO\";\n  return 0;\n}\n",
   },
   "section-leaderboard-rank-delta": {
     python: "def solve():\n    import sys\n    data = sys.stdin.read().strip().split()\n    if not data:\n        return\n    n = int(data[0])\n    scores = list(map(int, data[1:1 + n]))\n    ranked = sorted(enumerate(scores), key=lambda item: (-item[1], item[0]))\n    answer = [0] * n\n    for rank, (index, _) in enumerate(ranked, start=1):\n        answer[index] = rank\n    print(*answer)\n\nif __name__ == '__main__':\n    solve()\n",
-    javascript: "const fs = require('fs');\nconst tokens = fs.readFileSync(0, 'utf8').trim().split(/\\s+/);\nif (tokens.length) {\n  const n = Number(tokens[0]);\n  const scores = tokens.slice(1, 1 + n).map(Number);\n  const ranked = scores.map((score, index) => ({ score, index })).sort((a, b) => (b.score - a.score) || (a.index - b.index));\n  const answer = Array(n).fill(0);\n  ranked.forEach((item, rank) => { answer[item.index] = rank + 1; });\n  process.stdout.write(answer.join(' '));\n}\n",
     cpp: "#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n  ios::sync_with_stdio(false);\n  cin.tie(nullptr);\n  int n;\n  if (!(cin >> n)) return 0;\n  vector<pair<int, int>> ranked;\n  for (int i = 0; i < n; ++i) {\n    int score;\n    cin >> score;\n    ranked.push_back({score, i});\n  }\n  sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) {\n    if (a.first != b.first) return a.first > b.first;\n    return a.second < b.second;\n  });\n  vector<int> answer(n);\n  for (int i = 0; i < n; ++i) answer[ranked[i].second] = i + 1;\n  for (int i = 0; i < n; ++i) {\n    if (i) cout << ' ';\n    cout << answer[i];\n  }\n  return 0;\n}\n",
   },
 };
@@ -46,14 +83,48 @@ const STARTER_SOLUTIONS: Record<string, Partial<Record<string, string>>> = {
 // GET /api/problems
 router.get("/", optionalAuth, validate(problemFiltersSchema, "query"), async (req, res, next) => {
   try {
-    const { page, limit, difficulty, tag, search, status } = req.query as {
-      page: string; limit: string; difficulty?: string; tag?: string | string[]; search?: string; status?: string;
+    const { page, limit, difficulty, tag, search, status, visibility } = req.query as {
+      page: string; limit: string; difficulty?: string; tag?: string | string[]; search?: string; status?: string; visibility?: string;
     };
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const tagFilters = typeof tag === "string" ? [tag] : (tag ?? []);
 
+    // Build visibility filter based on user scope
+    const buildVisibilityFilter = () => {
+      const user = req.user;
+
+      // Staff can see all published problems
+      if (user && ["ADMIN", "SUPER_ADMIN", "DEPARTMENT_HEAD", "CLASS_COORDINATOR", "TEACHER"].includes(user.role)) {
+        return {};
+      }
+
+      if (!user) {
+        return { visibility: "GLOBAL" as const };
+      }
+
+      // Students see GLOBAL + their department's + their class's problems
+      return {
+        OR: [
+          { visibility: "GLOBAL" as const, approvalStatus: "APPROVED" as const },
+          {
+            visibility: "DEPARTMENT" as const,
+            departmentId: { in: user.scope.departmentIds },
+          },
+          {
+            visibility: "CLASS" as const,
+            classId: { in: user.scope.sectionIds },
+          },
+        ],
+      };
+    };
+
+    const visibilityFilter = visibility
+      ? { visibility: visibility as "GLOBAL" | "DEPARTMENT" | "CLASS" }
+      : buildVisibilityFilter();
+
     const where = {
       isPublished: true,
+      ...visibilityFilter,
       ...(difficulty ? { difficulty: difficulty as "EASY" | "MEDIUM" | "HARD" } : {}),
       ...(tagFilters.length > 0 ? { AND: tagFilters.map((tagValue) => ({ tags: { has: tagValue } })) } : {}),
       ...(search ? { OR: [{ title: { contains: search, mode: "insensitive" as const } }, { tags: { has: search } }] } : {}),
@@ -64,6 +135,9 @@ router.get("/", optionalAuth, validate(problemFiltersSchema, "query"), async (re
         where,
         select: {
           id: true, title: true, slug: true, difficulty: true, tags: true,
+          visibility: true,
+          scope: true,
+          createdBy: { select: { id: true, name: true } },
           points: true, createdAt: true,
           _count: { select: { submissions: true } },
         },
@@ -119,6 +193,8 @@ router.get("/", optionalAuth, validate(problemFiltersSchema, "query"), async (re
           ...problem,
           number: skip + index + 1,
           acceptanceRate: counts.total > 0 ? Math.round((counts.accepted / counts.total) * 1000) / 10 : 0,
+          scope: problem.scope ?? mapVisibilityToScope(problem.visibility),
+          normalizedTags: normalizeTagRefs(problem.tags),
           userStatus,
         };
       })
@@ -137,7 +213,13 @@ router.get("/", optionalAuth, validate(problemFiltersSchema, "query"), async (re
 router.post("/:id/run", authenticate, validate(runSchema), async (req, res, next) => {
   try {
     const { source_code, language, stdin } = req.body as { source_code: string; language: string; stdin?: string };
-    const languageId = LANGUAGE_IDS[language];
+    if (!isAllowedProblemLanguage(language)) {
+      throw new AppError("Only C, C++, and Python are supported", 400);
+    }
+    enforceSourceAndInputLimits(source_code, stdin);
+
+    const normalizedExecution = normalizeExecutionSource(language, source_code);
+    const languageId = await getJudge0LanguageId(normalizedExecution.effectiveLanguage);
     if (!languageId) throw new AppError("Unsupported language", 400);
 
     const problem = await prisma.problem.findUnique({
@@ -153,44 +235,140 @@ router.post("/:id/run", authenticate, validate(runSchema), async (req, res, next
 
     if (!problem || !problem.isPublished) throw new AppError("Problem not found", 404);
 
+    const shouldUseWrappedExecution =
+      !!problem.functionName &&
+      !!problem.returnType &&
+      Array.isArray(problem.parameterTypes) &&
+      problem.parameterTypes.length > 0 &&
+      isAllowedProblemLanguage(language);
+
     // Custom stdin mode — run against user-provided input only
     if (stdin !== undefined && stdin !== "") {
-      const token = await submitToJudge0(source_code, languageId, stdin);
-      const result = await pollResult(token);
+      if (shouldUseWrappedExecution) {
+        try {
+          JSON.parse(stdin);
+        } catch {
+          throw new AppError(
+            "For wrapped problems, custom input must be a JSON object (example: {\"nums\":[2,7,11,15],\"target\":9}).",
+            400
+          );
+        }
+
+        const summary = await executeSubmissionCases({
+          problem: {
+            id: problem.id,
+            functionName: problem.functionName,
+            parameterTypes: problem.parameterTypes,
+            returnType: problem.returnType,
+            compareMode: problem.compareMode as "EXACT" | "UNORDERED" | "FLOAT_TOLERANCE" | "IGNORE_TRAILING_WHITESPACE",
+            timeLimitMs: problem.timeLimitMs,
+            memoryLimitKb: problem.memoryLimitKb,
+          },
+          userCode: source_code,
+          language,
+          testCases: [{ input: stdin, expectedOutput: "", isHidden: false }],
+          skipComparison: true,
+        });
+
+        res.json({
+          success: true,
+          data: {
+            results: summary.results,
+            execution: {
+              typeScriptMode: language === "typescript" ? TS_EXECUTION_MODE : undefined,
+            },
+          },
+        });
+        return;
+      }
+
+      const [result] = await runBatch(normalizedExecution.effectiveUserCode, languageId, [
+        { input: stdin },
+      ]);
       res.json({
         success: true,
         data: {
           results: [toTestResult(result, 0, null)],
+          execution: {
+            typeScriptMode: language === "typescript" ? TS_EXECUTION_MODE : undefined,
+          },
         },
       });
       return;
     }
 
     const sampleCases = problem.testCases.filter((testCase) => testCase.isSample);
+    if (sampleCases.length > MAX_TEST_CASES_PER_RUN) {
+      throw new AppError(`Too many sample test cases configured. Maximum allowed is ${MAX_TEST_CASES_PER_RUN}`, 400);
+    }
 
-    if (sampleCases.length === 0) {
-      // No sample cases — run with empty stdin so the user still gets output
-      const token = await submitToJudge0(source_code, languageId, "");
-      const result = await pollResult(token);
+    if (shouldUseWrappedExecution && sampleCases.length > 0) {
+      const summary = await executeSubmissionCases({
+        problem: {
+          id: problem.id,
+          functionName: problem.functionName,
+          parameterTypes: problem.parameterTypes,
+          returnType: problem.returnType,
+          compareMode: problem.compareMode as "EXACT" | "UNORDERED" | "FLOAT_TOLERANCE" | "IGNORE_TRAILING_WHITESPACE",
+          timeLimitMs: problem.timeLimitMs,
+          memoryLimitKb: problem.memoryLimitKb,
+        },
+        userCode: source_code,
+        language,
+        testCases: sampleCases.map((testCase) => ({
+          input: testCase.input,
+          expectedOutput: testCase.expectedOutput,
+          isHidden: testCase.isHidden,
+        })),
+      });
+
       res.json({
         success: true,
         data: {
-          results: [toTestResult(result, 0, null)],
+          results: summary.results.map((result) => ({
+            caseIndex: result.caseIndex,
+            verdict: result.verdict,
+            stdout: result.stdout,
+            expected: result.expected,
+            stderr: result.stderr,
+            compileOutput: result.compileOutput,
+            runtime: result.runtime,
+            memory: result.memory,
+            passed: result.passed,
+          })),
+          execution: {
+            typeScriptMode: language === "typescript" ? TS_EXECUTION_MODE : undefined,
+          },
         },
       });
       return;
     }
 
-    // Submit each sample case individually in parallel and poll for results.
-    // We avoid batch mode here because some Judge0 setups enforce different
-    // (tighter) limits in batch vs. individual submissions.
-    const tokens = await Promise.all(
-      sampleCases.map((testCase) =>
-        submitToJudge0(source_code, languageId, testCase.input, testCase.expectedOutput)
-      )
-    );
+    if (sampleCases.length === 0) {
+      // No sample cases — run with empty stdin so the user still gets output
+      const [result] = await runBatch(normalizedExecution.effectiveUserCode, languageId, [
+        { input: "" },
+      ]);
+      res.json({
+        success: true,
+        data: {
+          results: [toTestResult(result, 0, null)],
+          execution: {
+            typeScriptMode: language === "typescript" ? TS_EXECUTION_MODE : undefined,
+          },
+        },
+      });
+      return;
+    }
 
-    const judgeResults = await Promise.all(tokens.map((token) => pollResult(token)));
+    const judgeResults = await runBatch(
+      normalizedExecution.effectiveUserCode,
+      languageId,
+      sampleCases.map((testCase) => ({
+        input: testCase.input,
+        expected_output: testCase.expectedOutput,
+      }))
+    );
 
     res.json({
       success: true,
@@ -198,6 +376,9 @@ router.post("/:id/run", authenticate, validate(runSchema), async (req, res, next
         results: judgeResults.map((result, index) =>
           toTestResult(result, index, sampleCases[index]?.expectedOutput ?? null)
         ),
+        execution: {
+          typeScriptMode: language === "typescript" ? TS_EXECUTION_MODE : undefined,
+        },
       },
     });
   } catch (err) {
@@ -205,7 +386,9 @@ router.post("/:id/run", authenticate, validate(runSchema), async (req, res, next
     if (err instanceof Error && err.message.includes("Judge0")) {
       return res.status(503).json({
         success: false,
-        error: `Judge0 execution service error: ${err.message}`,
+        error: err.message.startsWith("Judge0 ")
+          ? err.message
+          : `Judge0 execution service error: ${err.message}`,
       });
     }
     next(err);
@@ -215,8 +398,24 @@ router.post("/:id/run", authenticate, validate(runSchema), async (req, res, next
 router.post("/:id/submit", authenticate, validate(submitSchema), async (req, res, next) => {
   try {
     const { source_code, language } = req.body as { source_code: string; language: string };
+    if (!isAllowedProblemLanguage(language)) {
+      throw new AppError("Only C, C++, and Python are supported", 400);
+    }
+    enforceSourceAndInputLimits(source_code);
+
+    const contestId = typeof req.query.contestId === "string" ? req.query.contestId : undefined;
+
     const problem = await prisma.problem.findUnique({ where: { id: req.params.id } });
     if (!problem || !problem.isPublished) throw new AppError("Problem not found", 404);
+
+    const hiddenCount = await prisma.testCase.count({ where: { problemId: req.params.id, isHidden: true } });
+    const effectiveCount = hiddenCount > 0
+      ? hiddenCount
+      : await prisma.testCase.count({ where: { problemId: req.params.id, isHidden: false } });
+
+    if (effectiveCount > MAX_TEST_CASES_PER_SUBMIT) {
+      throw new AppError(`Too many test cases configured. Maximum allowed is ${MAX_TEST_CASES_PER_SUBMIT}`, 400);
+    }
 
     const submission = await prisma.submission.create({
       data: {
@@ -225,6 +424,7 @@ router.post("/:id/submit", authenticate, validate(submitSchema), async (req, res
         code: source_code,
         language,
         status: "PENDING",
+        ...(contestId ? { contestId } : {}),
       },
     });
 
@@ -234,6 +434,7 @@ router.post("/:id/submit", authenticate, validate(submitSchema), async (req, res
       problemId: req.params.id,
       source_code,
       language,
+      ...(contestId ? { contestId } : {}),
     });
 
     res.status(201).json({ success: true, data: { submissionId: submission.id } });
@@ -255,6 +456,16 @@ router.get("/:id", optionalAuth, async (req, res, next) => {
           where: { isSample: true },
           select: { id: true, input: true, expectedOutput: true, isSample: true },
         },
+        boilerplates: { select: { language: true, code: true }, orderBy: { language: "asc" } },
+        hints: { select: { tier: true, content: true }, orderBy: { tier: "asc" } },
+        editorial: {
+          select: {
+            summary: true,
+            approach: true,
+            complexity: true,
+            fullEditorial: true,
+          },
+        },
         createdBy: { select: { id: true, name: true } },
         _count: { select: { submissions: true } },
       },
@@ -270,7 +481,7 @@ router.get("/:id", optionalAuth, async (req, res, next) => {
       hasAttempted: boolean;
       hasAccepted: boolean;
       isRegistered: boolean;
-      status: "UPCOMING" | "LIVE" | "ENDED";
+      status: string;
       endTime: string;
     } | null = null;
 
@@ -345,9 +556,18 @@ router.get("/:id", optionalAuth, async (req, res, next) => {
         acceptanceRate: totalCount > 0 ? Math.round((acceptedCount / totalCount) * 1000) / 10 : 0,
         acceptedCount,
         totalCount,
-        hints: [],
+        hints: problem.hints.map((hint) => hint.content),
+        editorial: problem.editorial,
         companies: [],
-        starterCode: STARTER_SOLUTIONS[problem.slug] ?? {},
+        starterCode: (problem.starterCode as Record<string, string> | null) ?? STARTER_SOLUTIONS[problem.slug] ?? {},
+        boilerplates:
+          problem.boilerplates.length > 0
+            ? problem.boilerplates
+            : normalizeBoilerplates(problem.starterCode).length > 0
+              ? normalizeBoilerplates(problem.starterCode)
+              : normalizeBoilerplates(STARTER_SOLUTIONS[problem.slug] ?? {}),
+        normalizedTags: normalizeTagRefs(problem.tags),
+        scope: problem.scope ?? mapVisibilityToScope(problem.visibility),
         contestContext,
         userStatus: submissionSummary.some((entry) => entry.status === "ACCEPTED")
           ? ("solved" satisfies "solved" | "attempted" | "unsolved")
@@ -361,11 +581,260 @@ router.get("/:id", optionalAuth, async (req, res, next) => {
   }
 });
 
+// GET /api/problems/:id/boilerplates - list language starter code
+router.get("/:id/boilerplates", authenticate, async (req, res, next) => {
+  try {
+    const rows = await prisma.boilerplate.findMany({
+      where: { problemId: req.params.id },
+      select: { language: true, code: true },
+      orderBy: { language: "asc" },
+    });
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/problems/:id/boilerplates - upsert starter code for a language
+router.put("/:id/boilerplates", authenticate, requirePermission("problems:create"), validate(boilerplateUpsertSchema), async (req, res, next) => {
+  try {
+    const { language, code } = req.body as { language: string; code: string };
+
+    const boilerplate = await prisma.boilerplate.upsert({
+      where: { problemId_language: { problemId: req.params.id, language } },
+      update: { code },
+      create: { problemId: req.params.id, language, code },
+    });
+
+    res.json({ success: true, data: boilerplate });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/problems/:id/hints/:level - progressive hint retrieval
+router.get("/:id/hints/:level", authenticate, async (req, res, next) => {
+  try {
+    const level = Number.parseInt(req.params.level, 10);
+    if (!Number.isFinite(level) || level < 1) {
+      throw new AppError("Hint level must be a positive integer", 400);
+    }
+
+    const hint = await prisma.hint.findFirst({
+      where: { problemId: req.params.id, tier: level },
+      select: { id: true, tier: true, content: true },
+    });
+
+    if (!hint) {
+      throw new AppError("Hint not found", 404);
+    }
+
+    res.json({ success: true, data: hint });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/problems/:id/editorial
+router.get("/:id/editorial", authenticate, async (req, res, next) => {
+  try {
+    const editorial = await prisma.editorial.findUnique({
+      where: { problemId: req.params.id },
+      select: {
+        problemId: true,
+        summary: true,
+        approach: true,
+        complexity: true,
+        fullEditorial: true,
+      },
+    });
+
+    if (!editorial) {
+      throw new AppError("No editorial available", 404);
+    }
+
+    res.json({ success: true, data: editorial });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/problems/pending-approval - admin/dept head approval queue
+router.get("/pending-approval", authenticate, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!["ADMIN", "SUPER_ADMIN", "DEPARTMENT_HEAD"].includes(user.role)) {
+      throw new AppError("Insufficient permissions", 403);
+    }
+
+    const where = user.role === "DEPARTMENT_HEAD"
+      ? { approvalStatus: "PENDING" as const, visibility: "GLOBAL" as const, departmentId: { in: user.scope.departmentIds } }
+      : { approvalStatus: "PENDING" as const, visibility: "GLOBAL" as const };
+
+    const problems = await prisma.problem.findMany({
+      where,
+      include: { createdBy: { select: { id: true, name: true, role: true } } },
+      orderBy: { createdAt: "asc" },
+    });
+
+    res.json({ success: true, data: problems });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/problems/:id/approve
+router.post("/:id/approve", authenticate, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!["ADMIN", "SUPER_ADMIN", "DEPARTMENT_HEAD"].includes(user.role)) {
+      throw new AppError("Insufficient permissions", 403);
+    }
+
+    const problem = await prisma.problem.update({
+      where: { id: req.params.id },
+      data: { approvalStatus: "APPROVED", approvedById: user.id },
+    });
+
+    res.json({ success: true, data: problem });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/problems/:id/reject
+router.post("/:id/reject", authenticate, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!["ADMIN", "SUPER_ADMIN", "DEPARTMENT_HEAD"].includes(user.role)) {
+      throw new AppError("Insufficient permissions", 403);
+    }
+
+    const problem = await prisma.problem.update({
+      where: { id: req.params.id },
+      data: { approvalStatus: "REJECTED" },
+    });
+
+    res.json({ success: true, data: problem });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/problems - create problem (admin/teacher)
 router.post("/", authenticate, requirePermission("problems:create"), validate(createProblemSchema), async (req, res, next) => {
   try {
-    const problem = await prisma.problem.create({
-      data: { ...req.body, createdById: req.user!.id },
+    const {
+      visibility,
+      scope,
+      scopeSectionId,
+      scopeDepartmentId,
+      classId,
+      departmentId,
+      subjectId,
+      boilerplates = [],
+      hints = [],
+      editorial,
+      tagIds = [],
+      ...rest
+    } = req.body as {
+      visibility?: "GLOBAL" | "DEPARTMENT" | "CLASS" | "CONTEST_ONLY" | "ASSIGNMENT_ONLY";
+      scope?: "GLOBAL" | "DEPARTMENT" | "SECTION";
+      scopeSectionId?: string | null;
+      scopeDepartmentId?: string | null;
+      classId?: string | null;
+      departmentId?: string | null;
+      subjectId?: string | null;
+      boilerplates?: Array<{ language: string; code: string }>;
+      hints?: Array<{ tier?: number; content: string }>;
+      editorial?: { summary?: string; approach?: string; complexity?: string; fullEditorial: string };
+      tagIds?: string[];
+      [key: string]: unknown;
+    };
+    const user = req.user!;
+
+    const effectiveScope = scope ?? "GLOBAL";
+    const effectiveVisibility = visibility ?? mapScopeToVisibility(effectiveScope);
+    const effectiveClassId = classId ?? (effectiveScope === "SECTION" ? (scopeSectionId ?? null) : null);
+    const effectiveDepartmentId =
+      departmentId ?? (effectiveScope === "DEPARTMENT" ? (scopeDepartmentId ?? null) : null);
+
+    // Auto-set approval status based on visibility and role
+    let approvalStatus: "PENDING" | "APPROVED" = "APPROVED";
+    if (
+      effectiveVisibility === "GLOBAL" &&
+      !["ADMIN", "SUPER_ADMIN", "DEPARTMENT_HEAD"].includes(user.role)
+    ) {
+      approvalStatus = "PENDING";
+    }
+
+    const problem = await prisma.$transaction(async (tx) => {
+      const createData = {
+        ...(rest as Prisma.ProblemUncheckedCreateInput),
+        visibility: effectiveVisibility,
+        scope: effectiveScope,
+        scopeSectionId: scopeSectionId ?? effectiveClassId,
+        scopeDepartmentId: scopeDepartmentId ?? effectiveDepartmentId,
+        approvalStatus,
+        classId: effectiveClassId,
+        departmentId: effectiveDepartmentId,
+        subjectId: subjectId ?? null,
+        createdById: user.id,
+      } as Prisma.ProblemUncheckedCreateInput;
+
+      const created = await tx.problem.create({
+        data: createData,
+      });
+
+      if (boilerplates.length > 0) {
+        await tx.boilerplate.createMany({
+          data: boilerplates.map((entry) => ({
+            problemId: created.id,
+            language: entry.language,
+            code: entry.code,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      if (hints.length > 0) {
+        await tx.hint.createMany({
+          data: hints.map((entry, index) => ({
+            problemId: created.id,
+            tier: entry.tier ?? index + 1,
+            content: entry.content,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      if (editorial) {
+        await tx.editorial.upsert({
+          where: { problemId: created.id },
+          update: {
+            summary: editorial.summary ?? null,
+            approach: editorial.approach ?? null,
+            complexity: editorial.complexity ?? null,
+            fullEditorial: editorial.fullEditorial,
+          },
+          create: {
+            problemId: created.id,
+            summary: editorial.summary ?? null,
+            approach: editorial.approach ?? null,
+            complexity: editorial.complexity ?? null,
+            fullEditorial: editorial.fullEditorial,
+          },
+        });
+      }
+
+      if (tagIds.length > 0) {
+        await tx.problemTag.createMany({
+          data: tagIds.map((tagId) => ({ problemId: created.id, tagId })),
+          skipDuplicates: true,
+        });
+      }
+
+      return created;
     });
     res.status(201).json({ success: true, data: problem });
   } catch (err) {
@@ -419,9 +888,10 @@ router.get("/:id/test-cases", authenticate, requireRole(Role.ADMIN, Role.TEACHER
 // POST /api/problems/:id/ai-hint - AI analysis via OpenRouter
 router.post("/:id/ai-hint", authenticate, async (req, res, next) => {
   try {
-    const { code, language, problemTitle, problemDescription } = req.body as {
+    const { code, language, hintLevel, problemTitle, problemDescription } = req.body as {
       code: string;
       language: string;
+      hintLevel?: 1 | 2 | 3;
       problemTitle: string;
       problemDescription: string;
     };
@@ -430,80 +900,34 @@ router.post("/:id/ai-hint", authenticate, async (req, res, next) => {
       throw new AppError("code and language are required", 400);
     }
 
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) {
-      throw new AppError("AI service not configured", 503);
-    }
-
-    const systemPrompt = `You are an expert competitive programmer and coding interview coach.
-Analyze the user's code for a programming problem and provide:
-1. **Optimal Approach**: Suggest the best algorithm/data structure for this problem
-2. **Time Complexity**: Big-O time complexity of the optimal solution
-3. **Space Complexity**: Big-O space complexity of the optimal solution
-4. **Dry Run**: Step-by-step trace with a small example showing how the optimal solution works
-5. **Explanation**: Clear explanation of why this approach is optimal
-
-Format your response as valid JSON matching this schema:
-{
-  "optimalApproach": "description of optimal approach",
-  "timeComplexity": "O(...)",
-  "spaceComplexity": "O(...)",
-  "dryRun": "step by step dry run with example",
-  "explanation": "detailed explanation",
-  "issues": "any issues found in the submitted code (optional)"
-}`;
-
-    const userPrompt = `Problem: ${problemTitle}
-Description: ${problemDescription.slice(0, 500)}
-
-User's ${language} code:
-\`\`\`${language}
-${code.slice(0, 2000)}
-\`\`\`
-
-Analyze this and provide the optimal solution details in JSON format.`;
-
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://rankroom.app",
-        "X-Title": "RankRoom AI Assistant",
-      },
-      body: JSON.stringify({
-        model: process.env.OPENROUTER_MODEL ?? "google/gemini-flash-1.5",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        response_format: { type: "json_object" },
-        temperature: 0.3,
-        max_tokens: 1500,
-      }),
+    const problem = await prisma.problem.findUnique({
+      where: { id: req.params.id },
+      select: { title: true, description: true },
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("OpenRouter error:", errorText);
-      throw new AppError("AI service error", 502);
+    const resolvedProblemTitle = problem?.title ?? problemTitle ?? "Problem";
+    const resolvedProblemDescription = problem?.description ?? problemDescription ?? "";
+
+    if (hintLevel !== undefined) {
+      const hint = await generateHint({
+        problemTitle: resolvedProblemTitle,
+        problemDescription: resolvedProblemDescription,
+        code,
+        language,
+        hintLevel,
+      });
+
+      return res.json({ success: true, data: { hint, hintLevel } });
     }
 
-    const aiResponse = await response.json() as {
-      choices: Array<{ message: { content: string } }>;
-    };
+    const response = await getAiAssist({
+      code,
+      language,
+      problemTitle: resolvedProblemTitle,
+      problemDescription: resolvedProblemDescription,
+    });
 
-    const content = aiResponse.choices?.[0]?.message?.content;
-    if (!content) throw new AppError("Empty AI response", 502);
-
-    let parsed: Record<string, string>;
-    try {
-      parsed = JSON.parse(content) as Record<string, string>;
-    } catch {
-      parsed = { explanation: content, optimalApproach: "", timeComplexity: "Unknown", spaceComplexity: "Unknown", dryRun: "" };
-    }
-
-    res.json({ success: true, data: parsed });
+    res.json({ success: true, data: response.result });
   } catch (err) {
     next(err);
   }

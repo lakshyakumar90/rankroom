@@ -1,0 +1,12 @@
+-- CreateEnum
+CREATE TYPE "CompareMode" AS ENUM ('EXACT', 'UNORDERED', 'FLOAT_TOLERANCE', 'IGNORE_TRAILING_WHITESPACE');
+
+-- AlterTable
+ALTER TABLE "problems" ADD COLUMN     "compareMode" "CompareMode" NOT NULL DEFAULT 'IGNORE_TRAILING_WHITESPACE',
+ADD COLUMN     "functionName" TEXT,
+ADD COLUMN     "memoryLimitKb" INTEGER NOT NULL DEFAULT 262144,
+ADD COLUMN     "parameterNames" TEXT[] DEFAULT ARRAY[]::TEXT[],
+ADD COLUMN     "parameterTypes" JSONB,
+ADD COLUMN     "returnType" TEXT,
+ADD COLUMN     "starterCode" JSONB,
+ADD COLUMN     "timeLimitMs" INTEGER NOT NULL DEFAULT 2000;

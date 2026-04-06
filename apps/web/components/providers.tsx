@@ -9,7 +9,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useAuthStore } from "@/store/auth";
 import { SocketProvider } from "@/providers/SocketProvider";
 import { toast } from "sonner";
-import { clearAuth, hydrateUser } from "@/lib/auth";
+import { hydrateUser, signOutLocalAndClearStore } from "@/lib/auth";
 import {
   buildForbiddenRedirect,
   buildLoginRedirect,
@@ -46,7 +46,7 @@ function AuthInitializer() {
         const hydratedUser = await hydrateUser();
         if (hydratedUser) return;
 
-        clearAuth();
+        await signOutLocalAndClearStore();
       } finally {
         isInitializingRef.current = false;
       }
@@ -55,7 +55,7 @@ function AuthInitializer() {
     async function refreshAuthUser() {
       const hydratedUser = await hydrateUser();
       if (!hydratedUser) {
-        clearUser();
+        await signOutLocalAndClearStore();
       }
     }
 
@@ -131,6 +131,8 @@ function AuthInitializer() {
   return null;
 }
 
+import { TooltipProvider } from "@/components/ui/tooltip";
+
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
     () =>
@@ -151,7 +153,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <AuthInitializer />
         </Suspense>
         <SocketProvider>
-          {children}
+          <TooltipProvider>
+            {children}
+          </TooltipProvider>
           <ReactQueryDevtools initialIsOpen={false} />
         </SocketProvider>
       </QueryClientProvider>

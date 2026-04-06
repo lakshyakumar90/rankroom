@@ -64,6 +64,37 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const socket = getSocket();
 
+    const joinUserRooms = () => {
+      if (!user) return;
+
+      socket.emit("user:join", { userId: user.id });
+
+      if (user.scope?.primarySectionId) {
+        socket.emit("section:join", { sectionId: user.scope.primarySectionId });
+      }
+
+      if (user.scope?.primaryDepartmentId) {
+        socket.emit("department:join", { departmentId: user.scope.primaryDepartmentId });
+      }
+    };
+
+    const handleConnected = () => {
+      joinUserRooms();
+    };
+
+    const handleReconnected = () => {
+      joinUserRooms();
+      void queryClient.invalidateQueries({ queryKey: ["submissions"] });
+      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      toast("Connection restored", {
+        description: "Submission status and notifications are now synchronized.",
+      });
+    };
+
+    const handleConnectError = () => {
+      void queryClient.invalidateQueries({ queryKey: ["submissions"] });
+    };
+
     if (!user) {
       clearNotifications();
       socket.disconnect();
@@ -71,24 +102,22 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     }
 
     socket.connect();
-    socket.emit("user:join", { userId: user.id });
-
-    if (user.scope.primarySectionId) {
-      socket.emit("section:join", { sectionId: user.scope.primarySectionId });
-    }
-
-    if (user.scope.primaryDepartmentId) {
-      socket.emit("department:join", { departmentId: user.scope.primaryDepartmentId });
-    }
+    joinUserRooms();
 
     socket.on("notification:new", handleNotification);
     socket.on("leaderboard:updated", handleLeaderboardUpdated);
     socket.on("submission:result", handleSubmissionResult);
+    socket.on("connect", handleConnected);
+    socket.io.on("reconnect", handleReconnected);
+    socket.on("connect_error", handleConnectError);
 
     return () => {
       socket.off("notification:new", handleNotification);
       socket.off("leaderboard:updated", handleLeaderboardUpdated);
       socket.off("submission:result", handleSubmissionResult);
+      socket.off("connect", handleConnected);
+      socket.io.off("reconnect", handleReconnected);
+      socket.off("connect_error", handleConnectError);
     };
   }, [
     clearNotifications,

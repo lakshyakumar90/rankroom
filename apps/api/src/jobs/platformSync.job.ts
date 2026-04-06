@@ -3,9 +3,12 @@ import { prisma, type Prisma } from "@repo/database";
 import { AppError } from "../middleware/error";
 import { logger } from "../lib/logger";
 import { ensureStudentProfile } from "../services/student-profile.service";
+import { computeStreakFromHeatmap } from "../services/streak.service";
+import { recomputeStudentIntelligence } from "../services/student-intelligence.service";
 
 const LEETCODE_GRAPHQL_ENDPOINT = "https://leetcode.com/graphql";
 const GITHUB_CONTRIBUTIONS_ENDPOINT = "https://github-contributions-api.jogruber.de/v4";
+const GITHUB_CONTRIBUTIONS_FALLBACK_ENDPOINT = "https://github-contributions-api.deno.dev";
 
 const LEETCODE_QUERY = `
   query userCalendarAndStats($username: String!) {
@@ -48,6 +51,15 @@ function mergeHeatmaps(...heatmaps: Heatmap[]) {
     }
   }
   return merged;
+}
+
+function parseContributionCount(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, Math.trunc(value));
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+  }
+  return 0;
 }
 
 async function safeJson<T>(input: RequestInfo | URL, init?: RequestInit) {
@@ -129,7 +141,7 @@ function parseGitHubContributionCalendar(payload: Record<string, unknown>) {
 
   for (const item of directContributions) {
     const date = typeof item["date"] === "string" ? item["date"] : null;
-    const count = typeof item["count"] === "number" ? item["count"] : 0;
+    const count = parseContributionCount(item["count"] ?? item["contributionCount"]);
     if (date) {
       heatmap[date] = (heatmap[date] ?? 0) + count;
       total += count;
@@ -144,7 +156,7 @@ function parseGitHubContributionCalendar(payload: Record<string, unknown>) {
   for (const week of weeks) {
     for (const day of week.contributionDays ?? []) {
       const date = typeof day["date"] === "string" ? day["date"] : null;
-      const count = typeof day["contributionCount"] === "number" ? day["contributionCount"] : 0;
+      const count = parseContributionCount(day["contributionCount"] ?? day["count"]);
       if (date) {
         heatmap[date] = Math.max(heatmap[date] ?? 0, count);
       }
@@ -153,24 +165,57 @@ function parseGitHubContributionCalendar(payload: Record<string, unknown>) {
 
   total =
     total ||
-    (typeof payload["totalContributions"] === "number"
-      ? (payload["totalContributions"] as number)
-      : typeof payload["total"] === "number"
-        ? (payload["total"] as number)
-        : Object.values(heatmap).reduce((sum, value) => sum + value, 0));
+    (parseContributionCount(payload["totalContributions"]) ||
+      parseContributionCount(payload["total"]) ||
+      parseContributionCount(payload["contributionCount"]) ||
+      parseContributionCount(payload["contributionsCount"]) ||
+      Object.values(heatmap).reduce((sum, value) => sum + value, 0));
+
+  return { total, heatmap };
+}
+
+function parseFallbackGitHubContributionCalendar(payload: Record<string, unknown> | null) {
+  const heatmap: Heatmap = {};
+  if (!payload) return { total: 0, heatmap };
+
+  const weeks = Array.isArray(payload["contributions"])
+    ? (payload["contributions"] as Array<unknown>)
+    : [];
+
+  for (const week of weeks) {
+    if (!Array.isArray(week)) continue;
+    for (const day of week) {
+      if (!day || typeof day !== "object") continue;
+      const item = day as Record<string, unknown>;
+      const date = typeof item["date"] === "string" ? item["date"] : null;
+      const count = parseContributionCount(item["contributionCount"] ?? item["count"]);
+      if (date) {
+        heatmap[date] = (heatmap[date] ?? 0) + count;
+      }
+    }
+  }
+
+  const total =
+    parseContributionCount(payload["totalContributions"]) ||
+    parseContributionCount(payload["total"]) ||
+    Object.values(heatmap).reduce((sum, value) => sum + value, 0);
 
   return { total, heatmap };
 }
 
 async function syncGitHub(username: string): Promise<SyncPayload> {
-  const [contributionsPayload, repos] = await Promise.all([
-    safeJson<Record<string, unknown>>(`${GITHUB_CONTRIBUTIONS_ENDPOINT}/${username}`).catch(() => ({})),
+  const [contributionsPayload, fallbackContributionsPayload, repos] = await Promise.all([
+    safeJson<Record<string, unknown>>(`${GITHUB_CONTRIBUTIONS_ENDPOINT}/${username}`).catch(() => null),
+    safeJson<Record<string, unknown>>(`${GITHUB_CONTRIBUTIONS_FALLBACK_ENDPOINT}/${username}.json`).catch(() => null),
     safeJson<Array<{ language: string | null }>>(`https://api.github.com/users/${username}/repos?per_page=100&sort=updated`).catch(
       () => []
     ),
   ]);
 
-  const { total, heatmap } = parseGitHubContributionCalendar(contributionsPayload);
+  const primary = parseGitHubContributionCalendar(contributionsPayload ?? {});
+  const fallback = parseFallbackGitHubContributionCalendar(fallbackContributionsPayload);
+  const heatmap = mergeHeatmaps(primary.heatmap, fallback.heatmap);
+  const total = primary.total || fallback.total || Object.values(heatmap).reduce((sum, value) => sum + value, 0);
   const languageCounts = repos.reduce<Record<string, number>>((accumulator, repo) => {
     if (repo.language) {
       accumulator[repo.language] = (accumulator[repo.language] ?? 0) + 1;
@@ -329,19 +374,38 @@ export async function syncStudentProfileById(
     logger.warn({ profileId, error: String(result.reason) }, "Platform sync task failed");
   });
 
-  return prisma.studentProfile.update({
-    where: { id: profile.id },
-    data: {
-      ...updates,
-      activityHeatmap: mergeHeatmaps(...heatmaps),
-      lastSyncedAt: new Date(),
-    },
-    include: {
-      skills: true,
-      projects: true,
-      achievements: true,
-    },
+  const mergedHeatmap = mergeHeatmaps(...heatmaps);
+  const streakSummary = computeStreakFromHeatmap(mergedHeatmap);
+
+  const [, updatedProfile] = await prisma.$transaction([
+    prisma.profile.upsert({
+      where: { userId: profile.userId },
+      update: { streak: streakSummary.currentStreak },
+      create: { userId: profile.userId, streak: streakSummary.currentStreak, skills: [] },
+    }),
+    prisma.studentProfile.update({
+      where: { id: profile.id },
+      data: {
+        ...updates,
+        activityHeatmap: mergedHeatmap,
+        currentStreak: streakSummary.currentStreak,
+        longestStreak: streakSummary.longestStreak,
+        lastActiveDate: streakSummary.lastActiveDate,
+        lastSyncedAt: new Date(),
+      },
+      include: {
+        skills: true,
+        projects: true,
+        achievements: true,
+      },
+    }),
+  ]);
+
+  await recomputeStudentIntelligence(profile.userId).catch((error) => {
+    logger.warn({ userId: profile.userId, error: String(error) }, "Student intelligence recompute failed after sync");
   });
+
+  return updatedProfile;
 }
 
 export async function syncStudentProfileByUserId(

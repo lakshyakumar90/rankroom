@@ -7,6 +7,7 @@ import { AppError } from "../middleware/error";
 import { bulkCreateGradesSchema, createGradeSchema } from "@repo/validators";
 import { logActivity } from "../lib/activity";
 import { recomputeSectionLeaderboard } from "../services/leaderboard.service";
+import { calculateStudentCgpa, syncStudentProfileCgpa } from "../services/cgpa.service";
 
 const router: ExpressRouter = Router();
 router.use(authenticate);
@@ -140,6 +141,7 @@ router.post("/", validate(createGradeSchema), async (req, res, next) => {
       subjectId: grade.subjectId,
     });
 
+    await syncStudentProfileCgpa(grade.studentId);
     await recomputeSectionLeaderboard(subject.sectionId);
 
     res.status(201).json({ success: true, data: grade });
@@ -215,6 +217,8 @@ router.post("/bulk", validate(bulkCreateGradesSchema), async (req, res, next) =>
       semester,
     });
 
+    const affectedStudentIds = Array.from(new Set(upserted.map((entry) => entry.studentId)));
+    await Promise.all(affectedStudentIds.map((studentId) => syncStudentProfileCgpa(studentId)));
     await recomputeSectionLeaderboard(subject.sectionId);
 
     res.status(201).json({
@@ -318,6 +322,7 @@ router.patch("/:id", async (req, res, next) => {
     });
 
     await logActivity(req.user!.id, "grade.updated", { gradeId: updated.id });
+    await syncStudentProfileCgpa(updated.studentId);
     await recomputeSectionLeaderboard(grade.subject.sectionId);
 
     res.json({ success: true, data: updated });
@@ -332,46 +337,8 @@ router.get("/student/:studentId/cgpa", async (req, res, next) => {
       throw new AppError("Forbidden", 403);
     }
 
-    const grades = await prisma.grade.findMany({
-      where: { studentId: req.params.studentId },
-      include: { subject: { select: { id: true, name: true, code: true } } },
-      orderBy: { createdAt: "desc" },
-    });
-
-    // Weighted CGPA calculation:
-    // MID → max 25, FINAL → max 50, ASSIGNMENT → max 15, INTERNAL → max 10
-    const MAX_MARKS: Record<string, number> = { MID: 25, FINAL: 50, ASSIGNMENT: 15, INTERNAL: 10 };
-
-    // Group by subject then compute a per-subject percentage across exam types
-    const subjectMap = new Map<string, { name: string; code: string; totalObtained: number; totalMax: number }>();
-    for (const g of grades) {
-      if (!subjectMap.has(g.subjectId)) {
-        subjectMap.set(g.subjectId, { name: g.subject.name, code: g.subject.code, totalObtained: 0, totalMax: 0 });
-      }
-      const entry = subjectMap.get(g.subjectId)!;
-      const maxForType = MAX_MARKS[g.examType] ?? g.maxMarks;
-      // Normalize marks to the expected max for this exam type
-      const normalizedMarks = (g.marks / g.maxMarks) * maxForType;
-      entry.totalObtained += normalizedMarks;
-      entry.totalMax += maxForType;
-    }
-
-    const subjectBreakdown = Array.from(subjectMap.entries()).map(([subjectId, data]) => ({
-      subjectId,
-      subjectName: data.name,
-      subjectCode: data.code,
-      totalObtained: Math.round(data.totalObtained * 10) / 10,
-      totalMax: data.totalMax,
-      percentage: data.totalMax > 0 ? Math.round((data.totalObtained / data.totalMax) * 1000) / 10 : 0,
-      cgpaPoints: data.totalMax > 0 ? Math.round((data.totalObtained / data.totalMax) * 100) / 10 : 0,
-    }));
-
-    const cgpa =
-      subjectBreakdown.length > 0
-        ? Math.round((subjectBreakdown.reduce((sum, s) => sum + s.cgpaPoints, 0) / subjectBreakdown.length) * 100) / 100
-        : 0;
-
-    res.json({ success: true, data: { cgpa, subjectBreakdown, totalSubjects: subjectBreakdown.length } });
+    const cgpaData = await calculateStudentCgpa(req.params.studentId);
+    res.json({ success: true, data: cgpaData });
   } catch (error) {
     next(error);
   }

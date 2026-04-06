@@ -20,7 +20,7 @@ export async function sectionLeaderboardController(req: Request, res: Response, 
     const limit = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 20;
     const search = typeof req.query.search === "string" ? req.query.search : undefined;
     const filter = parseFilter(req.query.filter);
-    const data = await leaderboardService.getSectionLeaderboard(req.params.sectionId, filter, search, page, limit);
+    const data = await leaderboardService.getSectionLeaderboard(req.params.sectionId, filter, search, page, limit, req.user);
     res.json({ success: true, data });
   } catch (error) {
     next(error);
@@ -33,7 +33,7 @@ export async function departmentLeaderboardController(req: Request, res: Respons
     const limit = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 20;
     const search = typeof req.query.search === "string" ? req.query.search : undefined;
     const filter = parseFilter(req.query.filter);
-    const data = await leaderboardService.getDepartmentLeaderboard(req.params.departmentId, filter, search, page, limit);
+    const data = await leaderboardService.getDepartmentLeaderboard(req.params.departmentId, filter, search, page, limit, req.user);
     res.json({ success: true, data });
   } catch (error) {
     next(error);
@@ -44,8 +44,8 @@ export async function platformLeaderboardController(req: Request, res: Response,
   try {
     const page = typeof req.query.page === "string" ? parseInt(req.query.page, 10) : 1;
     const limit = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 50;
-    const data = await leaderboardService.getPlatformLeaderboard(page, limit);
-    res.json({ success: true, data: data.items, pagination: data.pagination });
+    const data = await leaderboardService.getPlatformLeaderboard(page, limit, req.user);
+    res.json({ success: true, data });
   } catch (error) {
     next(error);
   }

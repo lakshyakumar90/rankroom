@@ -15,9 +15,20 @@ import { useAuthStore } from "@/store/auth";
 import { hasPermission } from "@/lib/permissions";
 import { toast } from "sonner";
 
+type RegistrationState =
+  | { status: "NOT_REGISTERED"; canRegister: boolean; reason?: string }
+  | { status: "REGISTERED"; teamId?: string | null }
+  | { status: "PENDING"; teamId?: string | null }
+  | { status: "WITHDRAWN" }
+  | { status: "WAITLISTED" }
+  | { status: "REJECTED"; reason?: string | null };
+
 type ContestWithMeta = Contest & {
   _count: { registrations: number; problems: number };
+  // Legacy field - kept for backward compat
   isRegistered?: boolean;
+  // New canonical field from server
+  registrationState?: RegistrationState | null;
   createdBy?: { id: string; name: string };
 };
 
@@ -87,6 +98,82 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+// ─── Registration button driven by canonical server state ────────────────────
+function RegistrationButton({
+  contest,
+  canParticipate,
+  isLiveOrUpcoming,
+  isEnded,
+  onRegister,
+}: {
+  contest: ContestWithMeta;
+  canParticipate: boolean;
+  isLiveOrUpcoming: boolean;
+  isEnded: boolean;
+  onRegister: (id: string) => void;
+}) {
+  // Prefer new canonical registrationState, fallback to legacy isRegistered
+  const regState = contest.registrationState;
+
+  if (!regState && contest.isRegistered) {
+    return (
+      <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600">
+        <CheckCircle className="size-3" /> Registered
+      </span>
+    );
+  }
+
+  if (regState?.status === "REGISTERED") {
+    return (
+      <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600">
+        <CheckCircle className="size-3" /> Registered
+      </span>
+    );
+  }
+  if (regState?.status === "PENDING") {
+    return (
+      <span className="flex items-center gap-1 rounded-full bg-yellow-500/10 px-2 py-0.5 text-[10px] font-medium text-yellow-600">
+        Awaiting approval
+      </span>
+    );
+  }
+  if (regState?.status === "WAITLISTED") {
+    return (
+      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">Waitlisted</span>
+    );
+  }
+  if (regState?.status === "WITHDRAWN" || regState?.status === "REJECTED") {
+    return null;
+  }
+
+  if (canParticipate && isLiveOrUpcoming && (!regState || (regState.status === "NOT_REGISTERED" && regState.canRegister))) {
+    return (
+      <Button
+        size="sm"
+        variant="outline"
+        className="rounded-full h-7 text-xs px-3"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onRegister(contest.id);
+        }}
+      >
+        Register
+      </Button>
+    );
+  }
+
+  if (isEnded || (regState?.status === "NOT_REGISTERED" && !regState.canRegister)) {
+    return (
+      <span className="flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+        <Lock className="size-3" /> {regState?.reason ? regState.reason : "Closed"}
+      </span>
+    );
+  }
+
+  return null;
+}
+
 // ─── Contest Card ─────────────────────────────────────────────────────────────
 function ContestCard({ contest, onRegister }: {
   contest: ContestWithMeta;
@@ -109,35 +196,16 @@ function ContestCard({ contest, onRegister }: {
           {contest.description.replace(/[#*`]/g, "").trim().slice(0, 160)}
         </p>
 
-        {/* Registration state */}
+        {/* Registration state - driven by canonical server state */}
         <div className="flex items-center justify-between pt-2">
           <CountdownBadge contest={contest} />
-          <div className="flex shrink-0 items-center justify-end">
-            {contest.isRegistered ? (
-              <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600">
-                <CheckCircle className="size-3" />
-                Registered
-              </span>
-            ) : canParticipate && isLiveOrUpcoming ? (
-              <Button
-                size="sm"
-                variant="outline"
-                className="rounded-full h-7 text-xs px-3"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onRegister(contest.id);
-                }}
-              >
-                Register
-              </Button>
-            ) : isEnded ? (
-              <span className="flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-                <Lock className="size-3" />
-                Closed
-              </span>
-            ) : null}
-          </div>
+          <RegistrationButton
+            contest={contest}
+            canParticipate={canParticipate}
+            isLiveOrUpcoming={isLiveOrUpcoming}
+            isEnded={isEnded}
+            onRegister={onRegister}
+          />
         </div>
 
         <div className="mt-2 flex flex-col gap-2 text-[10px] text-muted-foreground border-t border-border/60 pt-3">

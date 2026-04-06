@@ -56,6 +56,11 @@ export const updateProfileSchema = z.object({
     .regex(/^[a-z0-9-]+$/, "Handle must be lowercase letters, numbers and hyphens only")
     .optional(),
   bio: z.string().max(500).optional(),
+  phoneNumber: z
+    .string()
+    .trim()
+    .regex(/^[0-9+\-\s()]{7,20}$/, "Enter a valid phone number")
+    .optional(),
   skills: z.array(z.string()).optional(),
   college: z.string().max(200).optional(),
   batch: z.string().max(50).optional(),
@@ -147,15 +152,20 @@ export const attendanceReportQuerySchema = paginationSchema.extend({
   belowThresholdOnly: z.coerce.boolean().optional(),
 });
 
-export const createGradeSchema = z.object({
-  studentId: cuid(),
-  subjectId: cuid(),
-  examType: z.enum(["MID", "FINAL", "INTERNAL", "ASSIGNMENT"]),
-  marks: z.number().min(0),
-  maxMarks: z.number().min(1),
-  semester: z.number().int().min(1).max(12),
-  remarks: z.string().max(500).optional(),
-});
+export const createGradeSchema = z
+  .object({
+    studentId: cuid(),
+    subjectId: cuid(),
+    examType: z.enum(["MID", "FINAL", "INTERNAL", "ASSIGNMENT"]),
+    marks: z.number().min(0),
+    maxMarks: z.number().min(1),
+    semester: z.number().int().min(1).max(12),
+    remarks: z.string().max(500).optional(),
+  })
+  .refine((data) => data.marks <= data.maxMarks, {
+    message: "marks cannot exceed maxMarks",
+    path: ["marks"],
+  });
 
 export const bulkCreateGradesSchema = z.object({
   subjectId: cuid(),
@@ -166,6 +176,50 @@ export const bulkCreateGradesSchema = z.object({
     z.object({
       studentId: cuid(),
       marks: z.number().min(0),
+      remarks: z.string().max(500).optional(),
+    })
+  ),
+})
+  .refine(
+    (data) => data.grades.every((g) => g.marks <= data.maxMarks),
+    (data) => ({
+      message: `One or more marks exceed the maximum of ${data.maxMarks}`,
+      path: ["grades"],
+    })
+  );
+
+// Schema for subject result components (mid-term, end-term, assignment, TC)
+export const subjectResultComponentSchema = z
+  .object({
+    studentId: cuid(),
+    subjectId: cuid(),
+    semester: z.number().int().min(1).max(12),
+    midTerm: z.number().min(0).optional(),
+    endTerm: z.number().min(0).optional(),
+    assignment: z.number().min(0).optional(),
+    tc: z.number().min(0).optional(),
+    remarks: z.string().max(500).optional(),
+    // Config passed from client to validate against (server still validates against DB config)
+    config: z
+      .object({
+        maxMidTerm: z.number().min(0).optional(),
+        maxEndTerm: z.number().min(0).optional(),
+        maxAssignment: z.number().min(0).optional(),
+        maxTC: z.number().min(0).optional(),
+      })
+      .optional(),
+  });
+
+export const bulkResultImportSchema = z.object({
+  subjectId: cuid(),
+  semester: z.number().int().min(1).max(12),
+  rows: z.array(
+    z.object({
+      studentId: cuid(),
+      midTerm: z.number().min(0).optional(),
+      endTerm: z.number().min(0).optional(),
+      assignment: z.number().min(0).optional(),
+      tc: z.number().min(0).optional(),
       remarks: z.string().max(500).optional(),
     })
   ),
@@ -194,12 +248,60 @@ export const createProblemSchema = z.object({
     .regex(/^[a-z0-9-]+$/, "Slug must be lowercase letters, numbers and hyphens only"),
   description: z.string().min(10),
   difficulty: z.enum(["EASY", "MEDIUM", "HARD"]),
-  tags: z.array(z.string()).min(1).max(10),
+  tags: z.array(z.string()).max(10).default([]),
+  scope: z.enum(["GLOBAL", "DEPARTMENT", "SECTION"]).optional().default("GLOBAL"),
+  scopeDepartmentId: cuid().optional().nullable(),
+  scopeSectionId: cuid().optional().nullable(),
+  tagIds: z.array(cuid()).optional().default([]),
   constraints: z.string().optional(),
   inputFormat: z.string().optional(),
   outputFormat: z.string().optional(),
   sampleInput: z.string().optional(),
   sampleOutput: z.string().optional(),
+  functionName: z.string().min(1).optional(),
+  parameterNames: z.array(z.string().min(1)).optional().default([]),
+  parameterTypes: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        type: z.string().min(1),
+      })
+    )
+    .optional(),
+  returnType: z.string().min(1).optional(),
+  starterCode: z.record(z.string(), z.string()).optional(),
+  boilerplates: z
+    .array(
+      z.object({
+        language: z.string().min(1).max(50),
+        code: z.string().min(1),
+      })
+    )
+    .optional()
+    .default([]),
+  hints: z
+    .array(
+      z.object({
+        tier: z.number().int().min(1).optional().default(1),
+        content: z.string().min(1),
+      })
+    )
+    .optional()
+    .default([]),
+  editorial: z
+    .object({
+      summary: z.string().optional(),
+      approach: z.string().optional(),
+      complexity: z.string().optional(),
+      fullEditorial: z.string().min(1),
+    })
+    .optional(),
+  compareMode: z
+    .enum(["EXACT", "UNORDERED", "FLOAT_TOLERANCE", "IGNORE_TRAILING_WHITESPACE"])
+    .optional()
+    .default("IGNORE_TRAILING_WHITESPACE"),
+  timeLimitMs: z.number().int().min(100).max(30000).optional().default(2000),
+  memoryLimitKb: z.number().int().min(16384).max(1048576).optional().default(262144),
   points: z.number().int().min(1),
   isPublished: z.boolean().default(false),
 });
@@ -235,15 +337,44 @@ export const createContestSchema = z
     description: z.string().min(10),
     startTime: z.string().datetime(),
     endTime: z.string().datetime(),
-    type: z.enum(["PUBLIC", "PRIVATE", "INSTITUTIONAL"]).default("PUBLIC"),
+    registrationEnd: z.string().datetime().optional().nullable(),
+    freezeTime: z.string().datetime().optional().nullable(),
+    type: z.enum(["PUBLIC", "PRIVATE", "INSTITUTIONAL", "SUBJECT", "DEPARTMENT", "INSTITUTION"]).default("PUBLIC"),
+    scope: z.enum(["GLOBAL", "DEPARTMENT", "SECTION"]).default("GLOBAL"),
     rules: z.string().optional(),
+    penaltyMinutes: z.number().int().min(0).max(120).optional(),
+    allowLateJoin: z.boolean().optional(),
+    aiDisabled: z.boolean().optional(),
+    xpReward: z.number().int().min(0).optional(),
     problemIds: z.array(cuid()).min(1),
+    departmentId: cuid().optional().nullable(),
+    subjectId: cuid().optional().nullable(),
     sectionId: cuid().optional().nullable(),
     participantIds: z.array(cuid()).optional().default([]),
   })
   .refine((data) => new Date(data.endTime) > new Date(data.startTime), {
     message: "End time must be after start time",
     path: ["endTime"],
+  })
+  .refine((data) => !data.registrationEnd || new Date(data.registrationEnd) <= new Date(data.startTime), {
+    message: "Registration end must be on or before start time",
+    path: ["registrationEnd"],
+  })
+  .refine((data) => !data.freezeTime || new Date(data.freezeTime) <= new Date(data.endTime), {
+    message: "Freeze time must be on or before end time",
+    path: ["freezeTime"],
+  })
+  .refine((data) => {
+    if (data.scope === "GLOBAL") {
+      return !data.departmentId && !data.sectionId && !data.subjectId;
+    }
+    if (data.scope === "DEPARTMENT") {
+      return !!data.departmentId && !data.sectionId;
+    }
+    return !!data.sectionId;
+  }, {
+    message: "Contest scope requires matching department/section fields",
+    path: ["scope"],
   });
 
 export const addContestProblemSchema = z.object({
@@ -262,6 +393,7 @@ export const createSubjectSchema = z.object({
 
 export const updateStudentProfileSchema = z.object({
   bio: z.string().max(1000).optional(),
+  phoneNumber: z.string().max(30).optional().nullable(),
   leetcodeUsername: z.string().max(100).optional().nullable(),
   githubUsername: z.string().max(100).optional().nullable(),
   codechefUsername: z.string().max(100).optional().nullable(),
@@ -269,6 +401,29 @@ export const updateStudentProfileSchema = z.object({
   hackerrankUsername: z.string().max(100).optional().nullable(),
   cgpa: z.number().min(0).max(10).optional().nullable(),
   isPublic: z.boolean().optional(),
+});
+
+export const hackathonWinnerEntryInputSchema = z.object({
+  rank: z.number().int().min(1).max(3),
+  teamName: z.string().min(1).max(120),
+  projectTitle: z.string().max(200).optional().nullable(),
+  submissionUrl: z.string().url().optional().nullable(),
+  notes: z.string().max(1000).optional().nullable(),
+  memberSnapshot: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(120),
+        email: z.string().email().optional().nullable(),
+        phoneNumber: z.string().max(30).optional().nullable(),
+        avatar: z.string().url().optional().nullable(),
+      })
+    )
+    .min(1)
+    .max(10),
+});
+
+export const upsertHackathonWinnersSchema = z.object({
+  winners: z.array(hackathonWinnerEntryInputSchema).max(3),
 });
 
 export const skillInputSchema = z.object({

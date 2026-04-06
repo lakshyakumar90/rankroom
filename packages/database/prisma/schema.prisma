@@ -8,46 +8,69 @@ datasource db {
 }
 
 model User {
-  id                        String                     @id @default(cuid())
-  supabaseId                String                     @unique
-  email                     String                     @unique
-  name                      String
-  role                      Role                       @default(STUDENT)
-  avatar                    String?
-  isVerified                Boolean                    @default(false)
-  githubUsername            String?
-  createdAt                 DateTime                   @default(now())
-  updatedAt                 DateTime                   @updatedAt
-  activityLogs              ActivityLog[]
-  assignmentAudience        AssignmentAudience[]
-  assignmentSubmissions     AssignmentSubmission[]
-  assignmentsCreated        Assignment[]               @relation("AssignmentCreator")
-  attendanceRecords         AttendanceRecord[]
-  attendanceTaken           AttendanceSession[]        @relation("AttendanceTaker")
-  competitionRegistrations  CompetitionRegistration[]  @relation("CompetitionParticipant")
-  competitionsCreated       Competition[]              @relation("CompetitionCreator")
-  contestAudience           ContestAudience[]
-  contestRegistrations      ContestRegistration[]
-  contestStandings          ContestStanding[]
-  contestsCreated           Contest[]                  @relation("ContestCreator")
-  departmentHeaded          Department?                @relation("DepartmentHead")
-  enrollments               Enrollment[]
-  gradesReceived            Grade[]                    @relation("StudentGrades")
-  gradesGiven               Grade[]                    @relation("TeacherGrades")
-  hackathonAudience         HackathonAudience[]
-  hackathonRegistrations    HackathonRegistration[]    @relation("HackathonParticipant")
-  hackathonTeamsLed         HackathonTeam[]            @relation("HackathonTeamLeader")
-  hackathonsCreated         Hackathon[]                @relation("HackathonCreator")
-  leaderboard               Leaderboard?
-  notifications             Notification[]
-  problemsCreated           Problem[]
-  profile                   Profile?
-  sectionLeaderboardEntries SectionLeaderboard[]       @relation("SectionLeaderboardStudent")
-  coordinatedSection        Section?                   @relation("SectionCC")
-  legacyTeachingSections    Section[]                  @relation("SectionLegacyTeacher")
-  studentProfile            StudentProfile?
-  submissions               Submission[]
-  teachingAssignments       TeacherSubjectAssignment[] @relation("TeacherAssignments")
+  id                            String                          @id @default(cuid())
+  supabaseId                    String                          @unique
+  email                         String                          @unique
+  name                          String
+  role                          Role                            @default(STUDENT)
+  avatar                        String?
+  isVerified                    Boolean                         @default(false)
+  githubUsername                String?
+  createdAt                     DateTime                        @default(now())
+  updatedAt                     DateTime                        @updatedAt
+  activityLogs                  ActivityLog[]
+  assignmentAudience            AssignmentAudience[]
+  assignmentSubmissions         AssignmentSubmission[]
+  assignmentsCreated            Assignment[]                    @relation("AssignmentCreator")
+  attendanceRecords             AttendanceRecord[]
+  attendanceTaken               AttendanceSession[]             @relation("AttendanceTaker")
+  certificatesApproved          Certificate[]                   @relation("CertificateApprover")
+  certificatesEarned            Certificate[]                   @relation("StudentCertificates")
+  competitionRegistrations      CompetitionRegistration[]       @relation("CompetitionParticipant")
+  competitionsCreated           Competition[]                   @relation("CompetitionCreator")
+  contestAudience               ContestAudience[]
+  contestRegistrations          ContestRegistration[]
+  contestStandings              ContestStanding[]
+  contestsCreated               Contest[]                       @relation("ContestCreator")
+  departmentHeaded               Department?                     @relation("DepartmentHead")
+  enrollments                   Enrollment[]
+  gradesReceived                Grade[]                         @relation("StudentGrades")
+  gradesGiven                   Grade[]                         @relation("TeacherGrades")
+  hackathonAudience             HackathonAudience[]
+  hackathonRegistrations        HackathonRegistration[]         @relation("HackathonParticipant")
+  hackathonStandings            HackathonStanding[]
+  hackathonTeamsLed             HackathonTeam[]                 @relation("HackathonTeamLeader")
+  hackathonsCreated             Hackathon[]                     @relation("HackathonCreator")
+  hackathonWinnerEntriesAdded   HackathonWinnerEntry[]
+  leaderboard                   Leaderboard?
+  notifications                 Notification[]
+  problemsApproved              Problem[]                       @relation("ProblemApprover")
+  problemsCreated               Problem[]                       @relation("ProblemCreator")
+  profile                       Profile?
+  sectionLeaderboardEntries     SectionLeaderboard[]            @relation("SectionLeaderboardStudent")
+  // Legacy: one user may be listed as primary coordinator on many sections
+  coordinatedSections           Section[]                       @relation("SectionCC")
+  legacyTeachingSections        Section[]                       @relation("SectionLegacyTeacher")
+  studentProfile                StudentProfile?
+  submissions                   Submission[]
+  teachingAssignments           TeacherSubjectAssignment[]      @relation("TeacherAssignments")
+  // New M:N coordinator assignments
+  sectionCoordinatorAssignments SectionCoordinatorAssignment[]  @relation("CoordinatorAssignments")
+  sectionCoordinatorAssigned    SectionCoordinatorAssignment[]  @relation("CoordinatorAssignedBy")
+  // Settings
+  settings                      UserSettings?
+  // Subject audit
+  subjectAuditLogs              SubjectAuditLog[]               @relation("SubjectAuditActor")
+  // Event teams
+  eventTeamsLed                 EventTeam[]                     @relation("EventTeamLeader")
+  eventTeamMemberships          EventTeamMember[]               @relation("EventTeamMemberships")
+  eventTeamJoinRequests         EventTeamJoinRequest[]          @relation("EventTeamJoinRequests")
+  eventTeamJoinRequestsResponded EventTeamJoinRequest[]         @relation("EventTeamJoinRequestResponder")
+  eventTeamInvitesReceived      EventTeamInvite[]               @relation("EventTeamInvitesReceived")
+  eventTeamInvitesSent          EventTeamInvite[]               @relation("EventTeamInvitesSent")
+  coachAdvice                   CoachAdvice[]
+  skillSnapshots                UserSkillSnapshot[]
+  skillProfile                  UserSkillProfile?
 
   @@map("users")
 }
@@ -56,6 +79,7 @@ model Profile {
   id          String   @id @default(cuid())
   userId      String   @unique
   bio         String?
+  phoneNumber String?
   skills      String[]
   socialLinks Json?
   college     String?
@@ -76,6 +100,7 @@ model Profile {
 model StudentProfile {
   id                     String        @id @default(cuid())
   userId                 String        @unique
+  phoneNumber            String?
   leetcodeUsername       String?
   githubUsername         String?
   codechefUsername       String?
@@ -96,10 +121,14 @@ model StudentProfile {
   codeforcesRank         String?
   cgpa                   Float?
   activityHeatmap        Json          @default("{}")
+  currentStreak          Int           @default(0)
+  longestStreak          Int           @default(0)
+  lastActiveDate         DateTime?     @db.Date
   lastSyncedAt           DateTime?
   bio                    String?
   resumeUrl              String?
   resumeFilename         String?
+  avatarPath             String?
   isPublic               Boolean       @default(true)
   createdAt              DateTime      @default(now())
   updatedAt              DateTime      @updatedAt
@@ -164,8 +193,10 @@ model Department {
   updatedAt             DateTime       @updatedAt
   description           String?
   competitions          Competition[]
+  contests              Contest[]      @relation("ContestDepartment")
   head                  User?          @relation("DepartmentHead", fields: [headId], references: [id])
   hackathons            Hackathon[]
+  problems              Problem[]      @relation("ProblemDepartment")
   targetedNotifications Notification[] @relation("NotificationTargetDepartment")
   sections              Section[]
   subjects              Subject[]
@@ -174,28 +205,32 @@ model Department {
 }
 
 model Section {
-  id                    String                     @id @default(cuid())
+  id                    String                          @id @default(cuid())
   name                  String
-  legacyYear            Int?                       @map("year")
+  legacyYear            Int?                            @map("year")
   semester              Int
   departmentId          String
-  legacyTeacherId       String?                    @map("teacherId")
-  createdAt             DateTime                   @default(now())
-  updatedAt             DateTime                   @updatedAt
+  legacyTeacherId       String?                         @map("teacherId")
+  createdAt             DateTime                        @default(now())
+  updatedAt             DateTime                        @updatedAt
   code                  String
   academicYear          String
-  coordinatorId         String?                    @unique
+  // Legacy single-coordinator (kept for backward compat; @unique removed to unblock M:N)
+  coordinatorId         String?
   attendanceSessions    AttendanceSession[]
   competitions          Competition[]
   contests              Contest[]
   enrollments           Enrollment[]
-  targetedNotifications Notification[]             @relation("NotificationTargetSection")
+  problems              Problem[]                       @relation("ProblemClass")
+  targetedNotifications Notification[]                  @relation("NotificationTargetSection")
   leaderboardEntries    SectionLeaderboard[]
-  coordinator           User?                      @relation("SectionCC", fields: [coordinatorId], references: [id])
-  department            Department                 @relation(fields: [departmentId], references: [id])
-  legacyTeacher         User?                      @relation("SectionLegacyTeacher", fields: [legacyTeacherId], references: [id])
+  coordinator           User?                           @relation("SectionCC", fields: [coordinatorId], references: [id])
+  department            Department                      @relation(fields: [departmentId], references: [id])
+  legacyTeacher         User?                           @relation("SectionLegacyTeacher", fields: [legacyTeacherId], references: [id])
   subjects              Subject[]
   teacherAssignments    TeacherSubjectAssignment[]
+  // M:N coordinator assignments (new canonical store)
+  coordinatorAssignments SectionCoordinatorAssignment[]
 
   @@unique([code, departmentId, academicYear])
   @@map("sections")
@@ -220,14 +255,20 @@ model Subject {
   sectionId          String
   departmentId       String
   teacherId          String?
+  isArchived         Boolean                    @default(false)
+  archivedAt         DateTime?
   createdAt          DateTime                   @default(now())
   updatedAt          DateTime                   @updatedAt
   assignments        Assignment[]
   attendanceSessions AttendanceSession[]
+  contests           Contest[]                  @relation("ContestSubject")
   grades             Grade[]
+  problems           Problem[]                  @relation("ProblemSubject")
   department         Department                 @relation(fields: [departmentId], references: [id])
   section            Section                    @relation(fields: [sectionId], references: [id])
   teacherAssignments TeacherSubjectAssignment[]
+  resultConfig       SubjectResultConfig?
+  auditLogs          SubjectAuditLog[]
 
   @@unique([code, sectionId])
   @@map("subjects")
@@ -304,14 +345,47 @@ model Assignment {
   dueDate       DateTime
   maxScore      Float
   attachmentUrl String?
+  type          AssignmentType         @default(FILE_UPLOAD)
+  status        AssignmentStatus       @default(CREATED)
+  allowLate     Boolean                @default(false)
+  latePenaltyPct Int                   @default(20)
+  xpWeight      Int                    @default(15)
   createdAt     DateTime               @default(now())
   updatedAt     DateTime               @updatedAt
   audience      AssignmentAudience[]
+  problems      AssignmentProblem[]
+  questions     AssignmentQuestion[]
   submissions   AssignmentSubmission[]
   subject       Subject                @relation(fields: [subjectId], references: [id])
   teacher       User                   @relation("AssignmentCreator", fields: [teacherId], references: [id])
 
   @@map("assignments")
+}
+
+model AssignmentProblem {
+  assignmentId String
+  problemId    String
+  order        Int        @default(0)
+  points       Int        @default(100)
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  problem      Problem    @relation(fields: [problemId], references: [id])
+
+  @@id([assignmentId, problemId])
+  @@map("assignment_problems")
+}
+
+model AssignmentQuestion {
+  id           String     @id @default(cuid())
+  assignmentId String
+  question     String
+  options      Json
+  correctAnswer String
+  points       Int        @default(10)
+  order        Int        @default(0)
+  createdAt    DateTime   @default(now())
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@map("assignment_questions")
 }
 
 model AssignmentAudience {
@@ -326,44 +400,78 @@ model AssignmentAudience {
 }
 
 model AssignmentSubmission {
-  id           String                     @id @default(cuid())
-  assignmentId String
-  studentId    String
-  submittedAt  DateTime?
-  fileUrl      String?
-  score        Float?
-  feedback     String?
-  status       AssignmentSubmissionStatus @default(PENDING)
-  createdAt    DateTime                   @default(now())
-  updatedAt    DateTime                   @updatedAt
-  assignment   Assignment                 @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  student      User                       @relation(fields: [studentId], references: [id])
+  id              String                     @id @default(cuid())
+  assignmentId    String
+  studentId       String
+  submittedAt     DateTime?
+  fileUrl         String?
+  score           Float?
+  feedback        String?
+  isLate          Boolean                    @default(false)
+  codeSubmissions Json?
+  mcqAnswers      Json?
+  gradedById      String?
+  gradedAt        DateTime?
+  status          AssignmentSubmissionStatus @default(PENDING)
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+  assignment      Assignment                 @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student         User                       @relation(fields: [studentId], references: [id])
 
   @@unique([assignmentId, studentId])
   @@map("assignment_submissions")
 }
 
 model Problem {
-  id           String           @id @default(cuid())
-  title        String
-  slug         String           @unique
-  description  String
-  difficulty   Difficulty
-  tags         String[]
-  constraints  String?
-  inputFormat  String?
-  outputFormat String?
-  sampleInput  String?
-  sampleOutput String?
-  createdById  String
-  isPublished  Boolean          @default(false)
-  points       Int
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
-  contests     ContestProblem[]
-  createdBy    User             @relation(fields: [createdById], references: [id])
-  submissions  Submission[]
-  testCases    TestCase[]
+  id             String              @id @default(cuid())
+  title          String
+  slug           String              @unique
+  description    String
+  difficulty     Difficulty
+  tags           String[]
+  scope          ProblemScope        @default(GLOBAL)
+  scopeSectionId String?
+  scopeDepartmentId String?
+  constraints    String?
+  inputFormat    String?
+  outputFormat   String?
+  sampleInput    String?
+  sampleOutput   String?
+  functionName   String?
+  parameterNames String[]            @default([])
+  parameterTypes Json?
+  returnType     String?
+  starterCode    Json?
+  compareMode    CompareMode         @default(IGNORE_TRAILING_WHITESPACE)
+  timeLimitMs    Int                 @default(2000)
+  memoryLimitKb  Int                 @default(262144)
+  acceptedSubmissions Int            @default(0)
+  totalSubmissions Int               @default(0)
+  createdById    String
+  isPublished    Boolean             @default(false)
+  points         Int
+  visibility     ProblemVisibility   @default(GLOBAL)
+  approvalStatus ApprovalStatus      @default(APPROVED)
+  approvedById   String?
+  classId        String?
+  departmentId   String?
+  subjectId      String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  assignments    AssignmentProblem[]
+  contests       ContestProblem[]
+  hackathons     HackathonProblem[]
+  approvedBy     User?               @relation("ProblemApprover", fields: [approvedById], references: [id])
+  class          Section?            @relation("ProblemClass", fields: [classId], references: [id])
+  department     Department?         @relation("ProblemDepartment", fields: [departmentId], references: [id])
+  createdBy      User                @relation("ProblemCreator", fields: [createdById], references: [id])
+  subject        Subject?            @relation("ProblemSubject", fields: [subjectId], references: [id])
+  boilerplates   Boilerplate[]
+  hints          Hint[]
+  editorial      Editorial?
+  problemTags    ProblemTag[]
+  submissions    Submission[]
+  testCases      TestCase[]
 
   @@map("problems")
 }
@@ -381,45 +489,123 @@ model TestCase {
   @@map("test_cases")
 }
 
-model Submission {
-  id        String           @id @default(cuid())
-  userId    String
+model Boilerplate {
+  id        String   @id @default(cuid())
   problemId String
-  contestId String?
-  code      String
   language  String
-  status    SubmissionStatus @default(PENDING)
-  runtime   Int?
-  memory    Int?
-  verdict   Json?
-  createdAt DateTime         @default(now())
-  contest   Contest?         @relation(fields: [contestId], references: [id])
-  problem   Problem          @relation(fields: [problemId], references: [id])
-  user      User             @relation(fields: [userId], references: [id])
+  code      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  problem   Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
+
+  @@unique([problemId, language])
+  @@map("problem_boilerplates")
+}
+
+model Hint {
+  id        String   @id @default(cuid())
+  problemId String
+  tier      Int      @default(1)
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  problem   Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
+
+  @@unique([problemId, tier])
+  @@map("problem_hints")
+}
+
+model Editorial {
+  id            String   @id @default(cuid())
+  problemId     String   @unique
+  summary       String?
+  approach      String?
+  complexity    String?
+  fullEditorial String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  problem       Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
+
+  @@map("problem_editorials")
+}
+
+model Tag {
+  id        String      @id @default(cuid())
+  name      String
+  slug      String      @unique
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  problems  ProblemTag[]
+
+  @@map("tags")
+}
+
+model ProblemTag {
+  problemId  String
+  tagId      String
+  createdAt  DateTime @default(now())
+  problem    Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([problemId, tagId])
+  @@map("problem_tags")
+}
+
+model Submission {
+  id          String           @id @default(cuid())
+  userId      String
+  problemId   String
+  contestId   String?
+  hackathonId String?
+  code        String
+  language    String
+  status      SubmissionStatus @default(PENDING)
+  runtime     Int?
+  memory      Int?
+  verdict     Json?
+  testResults Json?
+  compileError String?
+  stderr      String?
+  createdAt   DateTime         @default(now())
+  contest     Contest?         @relation(fields: [contestId], references: [id])
+  problem     Problem          @relation(fields: [problemId], references: [id])
+  user        User             @relation(fields: [userId], references: [id])
 
   @@map("submissions")
 }
 
 model Contest {
-  id            String                @id @default(cuid())
-  title         String
-  description   String
-  startTime     DateTime
-  endTime       DateTime
-  type          ContestType           @default(PUBLIC)
-  status        ContestStatus         @default(UPCOMING)
-  createdById   String
-  rules         String?
-  createdAt     DateTime              @default(now())
-  updatedAt     DateTime              @updatedAt
-  sectionId     String?
-  audience      ContestAudience[]
-  problems      ContestProblem[]
-  registrations ContestRegistration[]
-  standings     ContestStanding[]
-  createdBy     User                  @relation("ContestCreator", fields: [createdById], references: [id])
-  section       Section?              @relation(fields: [sectionId], references: [id])
-  submissions   Submission[]
+  id              String                @id @default(cuid())
+  title           String
+  description     String
+  startTime       DateTime
+  endTime         DateTime
+  registrationEnd DateTime?
+  freezeTime      DateTime?
+  type            ContestType           @default(PUBLIC)
+  scope           ContestScope          @default(GLOBAL)
+  status          ContestStatus         @default(UPCOMING)
+  createdById     String
+  rules           String?
+  penaltyMinutes  Int                   @default(10)
+  allowLateJoin   Boolean               @default(false)
+  aiDisabled      Boolean               @default(true)
+  xpReward        Int                   @default(100)
+  maxParticipants Int?
+  departmentId    String?
+  subjectId       String?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  sectionId       String?
+  audience        ContestAudience[]
+  problems        ContestProblem[]
+  registrations   ContestRegistration[]
+  standings       ContestStanding[]
+  createdBy       User                  @relation("ContestCreator", fields: [createdById], references: [id])
+  department      Department?           @relation("ContestDepartment", fields: [departmentId], references: [id])
+  section         Section?              @relation(fields: [sectionId], references: [id])
+  subject         Subject?              @relation("ContestSubject", fields: [subjectId], references: [id])
+  submissions     Submission[]
 
   @@map("contests")
 }
@@ -437,11 +623,14 @@ model ContestProblem {
 }
 
 model ContestRegistration {
-  contestId    String
-  userId       String
-  registeredAt DateTime @default(now())
-  contest      Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
-  user         User     @relation(fields: [userId], references: [id])
+  contestId       String
+  userId          String
+  registeredAt    DateTime           @default(now())
+  status          RegistrationStatus @default(REGISTERED)
+  eligibilityNote String?
+  registeredById  String?
+  contest         Contest            @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  user            User               @relation(fields: [userId], references: [id])
 
   @@id([contestId, userId])
   @@map("contest_registrations")
@@ -466,6 +655,11 @@ model ContestStanding {
   penalty        Int       @default(0)
   rank           Int?
   solvedCount    Int       @default(0)
+  acceptedCount  Int       @default(0)
+  wrongCount     Int       @default(0)
+  solveTimeSeconds Int     @default(0)
+  perProblemResults Json   @default("{}")
+  lastAcceptedTime DateTime?
   lastSubmitTime DateTime?
   updatedAt      DateTime  @updatedAt
   contest        Contest   @relation(fields: [contestId], references: [id], onDelete: Cascade)
@@ -499,12 +693,16 @@ model Hackathon {
   description          String
   departmentId         String?
   createdById          String
+  type                 HackathonType           @default(DSA)
   minSkills            String[]
   minProjects          Int                     @default(0)
   minLeetcode          Int                     @default(0)
   minCgpa              Float?
+  eligibility          Json?
+  xpRewards            Json?
   startDate            DateTime
   endDate              DateTime
+  freezeTime           DateTime?
   registrationDeadline DateTime
   maxTeamSize          Int                     @default(4)
   minTeamSize          Int                     @default(1)
@@ -513,12 +711,45 @@ model Hackathon {
   createdAt            DateTime                @default(now())
   updatedAt            DateTime                @updatedAt
   audience             HackathonAudience[]
+  problems             HackathonProblem[]
   registrations        HackathonRegistration[]
+  standings            HackathonStanding[]
   teams                HackathonTeam[]
+  winnerEntries        HackathonWinnerEntry[]
   createdBy            User                    @relation("HackathonCreator", fields: [createdById], references: [id])
   department           Department?             @relation(fields: [departmentId], references: [id])
 
   @@map("hackathons")
+}
+
+model HackathonProblem {
+  hackathonId String
+  problemId   String
+  order       Int       @default(0)
+  points      Int       @default(100)
+  hackathon   Hackathon @relation(fields: [hackathonId], references: [id], onDelete: Cascade)
+  problem     Problem   @relation(fields: [problemId], references: [id])
+
+  @@id([hackathonId, problemId])
+  @@map("hackathon_problems")
+}
+
+model HackathonStanding {
+  id             String    @id @default(cuid())
+  hackathonId    String
+  userId         String
+  teamId         String?
+  totalScore     Int       @default(0)
+  penalty        Int       @default(0)
+  rank           Int?
+  solvedCount    Int       @default(0)
+  lastSubmitTime DateTime?
+  updatedAt      DateTime  @updatedAt
+  hackathon      Hackathon @relation(fields: [hackathonId], references: [id], onDelete: Cascade)
+  user           User      @relation(fields: [userId], references: [id])
+
+  @@unique([hackathonId, userId])
+  @@map("hackathon_standings")
 }
 
 model HackathonAudience {
@@ -555,6 +786,8 @@ model HackathonRegistration {
   teamId          String?
   isEligible      Boolean        @default(false)
   eligibilityNote String?
+  phoneNumberSnapshot String?
+  avatarUrlSnapshot String?
   registeredAt    DateTime       @default(now())
   hackathon       Hackathon      @relation(fields: [hackathonId], references: [id], onDelete: Cascade)
   student         User           @relation("HackathonParticipant", fields: [studentId], references: [id])
@@ -562,6 +795,51 @@ model HackathonRegistration {
 
   @@unique([hackathonId, studentId])
   @@map("hackathon_registrations")
+}
+
+model HackathonWinnerEntry {
+  id             String    @id @default(cuid())
+  hackathonId    String
+  rank           Int
+  teamName       String
+  projectTitle   String?
+  submissionUrl  String?
+  memberSnapshot Json
+  notes          String?
+  addedById      String
+  addedAt        DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  hackathon      Hackathon @relation(fields: [hackathonId], references: [id], onDelete: Cascade)
+  addedBy        User      @relation(fields: [addedById], references: [id])
+
+  @@unique([hackathonId, rank])
+  @@map("hackathon_winner_entries")
+}
+
+model Certificate {
+  id               String          @id @default(cuid())
+  studentId        String
+  type             CertificateType
+  title            String
+  description      String?
+  issuedAt         DateTime        @default(now())
+  externalUrl      String?
+  proofFile        String?
+  status           CertStatus      @default(PENDING)
+  approvedById     String?
+  approvedAt       DateTime?
+  rejectionReason  String?
+  xpBonus          Int             @default(0)
+  verificationCode String?         @unique
+  certificateUrl   String?
+  contestId        String?
+  hackathonId      String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  approvedBy       User?           @relation("CertificateApprover", fields: [approvedById], references: [id])
+  student          User            @relation("StudentCertificates", fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@map("certificates")
 }
 
 model Competition {
@@ -635,11 +913,57 @@ model Notification {
   targetDepartmentId String?
   targetRole         Role?
   targetSectionId    String?
+  // Idempotency key to prevent duplicate reminder notifications
+  dedupeKey          String?
   targetDepartment   Department?      @relation("NotificationTargetDepartment", fields: [targetDepartmentId], references: [id])
   targetSection      Section?         @relation("NotificationTargetSection", fields: [targetSectionId], references: [id])
   user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([dedupeKey])
   @@map("notifications")
+}
+
+model UserSkillProfile {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  skills           Json     @default("{}")
+  activityScore    Float    @default(0)
+  consistencyScore Float    @default(0)
+  lastComputedAt   DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_skill_profiles")
+}
+
+model UserSkillSnapshot {
+  id               String   @id @default(cuid())
+  userId           String
+  snapshotDate     DateTime @db.Date
+  skillsSnapshot   Json     @default("{}")
+  activityScore    Float    @default(0)
+  consistencyScore Float    @default(0)
+  createdAt        DateTime @default(now())
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, snapshotDate])
+  @@map("user_skill_snapshots")
+}
+
+model CoachAdvice {
+  id         String   @id @default(cuid())
+  userId     String
+  adviceDate DateTime @db.Date
+  warning    String
+  motivation String
+  tasks      String[]
+  source     String
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, adviceDate])
+  @@map("coach_advice")
 }
 
 model ActivityLog {
@@ -651,6 +975,185 @@ model ActivityLog {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("activity_logs")
+}
+
+// ─── New models added in refactor ────────────────────────────────────────────
+
+/// M:N table replacing the single Section.coordinatorId
+model SectionCoordinatorAssignment {
+  id           String   @id @default(cuid())
+  userId       String
+  sectionId    String
+  assignedAt   DateTime @default(now())
+  assignedById String?
+  isActive     Boolean  @default(true)
+  user         User     @relation("CoordinatorAssignments", fields: [userId], references: [id], onDelete: Cascade)
+  section      Section  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  assignedBy   User?    @relation("CoordinatorAssignedBy", fields: [assignedById], references: [id])
+
+  @@unique([userId, sectionId])
+  @@map("section_coordinator_assignments")
+}
+
+/// Role-aware user preferences and notification settings
+model UserSettings {
+  id                   String   @id @default(cuid())
+  userId               String   @unique
+  notificationsEnabled Boolean  @default(true)
+  emailDigest          Boolean  @default(false)
+  contestReminders     Boolean  @default(true)
+  hackathonReminders   Boolean  @default(true)
+  assignmentReminders  Boolean  @default(true)
+  attendanceAlerts     Boolean  @default(true)
+  theme                String?
+  publicProfileDefault Boolean  @default(false)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_settings")
+}
+
+/// Per-subject grading component configuration for marks validation
+model SubjectResultConfig {
+  id            String   @id @default(cuid())
+  subjectId     String   @unique
+  maxMidTerm    Float    @default(25)
+  maxEndTerm    Float    @default(50)
+  maxAssignment Float    @default(15)
+  maxTC         Float    @default(10)
+  credits       Int?
+  isArchived    Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  subject       Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@map("subject_result_configs")
+}
+
+/// Audit trail for subject name/teacher/archive changes
+model SubjectAuditLog {
+  id        String   @id @default(cuid())
+  subjectId String
+  actorId   String
+  action    String
+  oldValue  Json?
+  newValue  Json?
+  createdAt DateTime @default(now())
+  actor     User     @relation("SubjectAuditActor", fields: [actorId], references: [id])
+  subject   Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@map("subject_audit_logs")
+}
+
+/// Unified event team for hackathons and team contests
+model EventTeam {
+  id            String                 @id @default(cuid())
+  hackathonId   String?
+  contestId     String?
+  name          String
+  teamCode      String                 @unique
+  leaderId      String
+  submissionUrl String?
+  isLocked      Boolean                @default(false)
+  lockedAt      DateTime?
+  rank          Int?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  leader        User                   @relation("EventTeamLeader", fields: [leaderId], references: [id])
+  members       EventTeamMember[]
+  joinRequests  EventTeamJoinRequest[]
+  invites       EventTeamInvite[]
+
+  @@map("event_teams")
+}
+
+/// Approved member of an event team
+model EventTeamMember {
+  id       String    @id @default(cuid())
+  teamId   String
+  userId   String
+  isLeader Boolean   @default(false)
+  joinedAt DateTime  @default(now())
+  team     EventTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user     User      @relation("EventTeamMemberships", fields: [userId], references: [id])
+
+  @@unique([teamId, userId])
+  @@map("event_team_members")
+}
+
+/// Pending join request from a student to a team
+model EventTeamJoinRequest {
+  id          String            @id @default(cuid())
+  teamId      String
+  userId      String
+  status      TeamRequestStatus @default(PENDING)
+  message     String?
+  respondedAt DateTime?
+  respondedBy String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  team        EventTeam         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user        User              @relation("EventTeamJoinRequests", fields: [userId], references: [id])
+  responder   User?             @relation("EventTeamJoinRequestResponder", fields: [respondedBy], references: [id])
+
+  @@unique([teamId, userId])
+  @@map("event_team_join_requests")
+}
+
+/// Invitation sent by a team leader to a student
+model EventTeamInvite {
+  id          String            @id @default(cuid())
+  teamId      String
+  invitedId   String
+  invitedById String
+  status      TeamRequestStatus @default(PENDING)
+  expiresAt   DateTime?
+  respondedAt DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  team        EventTeam         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  invited     User              @relation("EventTeamInvitesReceived", fields: [invitedId], references: [id])
+  invitedBy   User              @relation("EventTeamInvitesSent", fields: [invitedById], references: [id])
+
+  @@unique([teamId, invitedId])
+  @@map("event_team_invites")
+}
+
+/// Queue table for scheduled reminder notifications
+model ScheduledNotification {
+  id             String                      @id @default(cuid())
+  jobType        String
+  entityType     String
+  entityId       String
+  scheduledFor   DateTime
+  recipientScope Json
+  status         ScheduledNotificationStatus @default(PENDING)
+  processedAt    DateTime?
+  failedAt       DateTime?
+  lastError      String?
+  attemptCount   Int                         @default(0)
+  dedupeKey      String                      @unique
+  createdAt      DateTime                    @default(now())
+  updatedAt      DateTime                    @updatedAt
+
+  @@index([status, scheduledFor])
+  @@map("scheduled_notifications")
+}
+
+/// Audit log for each reminder job run
+model ReminderJobRun {
+  id             String   @id @default(cuid())
+  jobType        String
+  ranAt          DateTime @default(now())
+  candidateCount Int      @default(0)
+  deliveredCount Int      @default(0)
+  failedCount    Int      @default(0)
+  durationMs     Int?
+  error          String?
+  metadata       Json?
+
+  @@map("reminder_job_runs")
 }
 
 enum Role {
@@ -692,22 +1195,98 @@ enum AssignmentSubmissionStatus {
   LATE
 }
 
+enum AssignmentType {
+  CODING
+  FILE_UPLOAD
+  MCQ
+  MIXED
+}
+
+enum AssignmentStatus {
+  CREATED
+  ACTIVE
+  DEADLINE_EXPIRED
+  EVALUATION
+  RESULTS_PUBLISHED
+}
+
+enum ProblemVisibility {
+  GLOBAL
+  DEPARTMENT
+  CLASS
+  CONTEST_ONLY
+  ASSIGNMENT_ONLY
+}
+
+enum ProblemScope {
+  GLOBAL
+  DEPARTMENT
+  SECTION
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum HackathonType {
+  DSA
+  PROJECT
+}
+
+enum CertificateType {
+  CONTEST_WINNER
+  HACKATHON
+  PROBLEM_STREAK
+  EXTERNAL
+  ACADEMIC_EXCELLENCE
+}
+
+enum CertStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REVOKED
+}
+
 enum Difficulty {
   EASY
   MEDIUM
   HARD
 }
 
+enum CompareMode {
+  EXACT
+  UNORDERED
+  FLOAT_TOLERANCE
+  IGNORE_TRAILING_WHITESPACE
+}
+
 enum ContestType {
   PUBLIC
   PRIVATE
   INSTITUTIONAL
+  SUBJECT
+  DEPARTMENT
+  INSTITUTION
+}
+
+enum ContestScope {
+  GLOBAL
+  DEPARTMENT
+  SECTION
 }
 
 enum ContestStatus {
+  DRAFT
   UPCOMING
+  SCHEDULED
+  REGISTRATION_OPEN
   LIVE
+  FROZEN
   ENDED
+  RESULTS_PUBLISHED
 }
 
 enum SkillLevel {
@@ -753,4 +1332,41 @@ enum NotificationType {
   LEADERBOARD_UPDATED
   ATTENDANCE_LOW
   ANNOUNCEMENT
+  CERTIFICATE_EARNED
+  CERTIFICATE_APPROVED
+  COACH_ADVICE_READY
+  CERTIFICATE_REJECTED
+  ASSIGNMENT_DEADLINE_SOON
+  HACKATHON_STARTING_SOON
+  CONTEST_FROZEN
+  RANK_CHANGE
+  // Team lifecycle notifications
+  TEAM_INVITE_RECEIVED
+  TEAM_JOIN_REQUEST_RECEIVED
+  TEAM_REQUEST_APPROVED
+  TEAM_REQUEST_REJECTED
+  REGISTRATION_CONFIRMED
+}
+
+enum TeamRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+enum RegistrationStatus {
+  PENDING
+  REGISTERED
+  WAITLISTED
+  WITHDRAWN
+  REJECTED
+}
+
+enum ScheduledNotificationStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  SKIPPED
 }

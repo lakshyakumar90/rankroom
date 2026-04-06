@@ -76,10 +76,18 @@ const PERMISSIONS: Record<PermissionKey, Array<Role | "*">> = {
   ],
   "contests:delete": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD],
   "contests:participate": [Role.STUDENT],
+  "events:manage-participants": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD, Role.CLASS_COORDINATOR, Role.TEACHER],
+  "events:view-participants": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD, Role.CLASS_COORDINATOR, Role.TEACHER],
   "hackathons:create": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD, Role.CLASS_COORDINATOR, Role.TEACHER],
   "hackathons:update": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD, Role.CLASS_COORDINATOR, Role.TEACHER],
   "hackathons:delete": [Role.SUPER_ADMIN, Role.ADMIN],
   "hackathons:register": [Role.STUDENT],
+  "teams:create": [Role.STUDENT],
+  "teams:approve-requests": [Role.STUDENT],
+  "sections:assign-coordinator": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD],
+  "sections:assign-teacher": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD],
+  "subjects:update": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD, Role.CLASS_COORDINATOR],
+  "subjects:archive": [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD],
   "problems:create": [
     Role.SUPER_ADMIN,
     Role.ADMIN,
@@ -102,6 +110,8 @@ const PERMISSIONS: Record<PermissionKey, Array<Role | "*">> = {
     Role.DEPARTMENT_HEAD,
     Role.CLASS_COORDINATOR,
   ],
+  "skills:update:own": [Role.STUDENT, Role.TEACHER, Role.CLASS_COORDINATOR, Role.DEPARTMENT_HEAD, Role.ADMIN],
+  "settings:update:own": [Role.STUDENT, Role.TEACHER, Role.CLASS_COORDINATOR, Role.DEPARTMENT_HEAD, Role.ADMIN],
   "leaderboard:view": ["*"],
   "analytics:platform": [Role.SUPER_ADMIN, Role.ADMIN],
   "analytics:department": [Role.DEPARTMENT_HEAD],
@@ -110,6 +120,8 @@ const PERMISSIONS: Record<PermissionKey, Array<Role | "*">> = {
   "notifications:send:platform": [Role.SUPER_ADMIN, Role.ADMIN],
   "notifications:send:department": [Role.DEPARTMENT_HEAD],
   "notifications:send:section": [Role.CLASS_COORDINATOR],
+  "notifications:view:own-summary": ["*"],
+  "reminders:monitor": [Role.SUPER_ADMIN, Role.ADMIN],
 };
 
 export function hasPermission(role: Role | null | undefined, permission: PermissionKey) {

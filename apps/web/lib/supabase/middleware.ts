@@ -51,6 +51,11 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (user && isAuthRoute(path)) {
+    // Client sent user here after failing protected-route auth (e.g. stale Supabase
+    // cookie, DB user missing). Do not bounce back to dashboard — that causes a loop.
+    if (request.nextUrl.searchParams.has("redirectedFrom")) {
+      return supabaseResponse;
+    }
     return NextResponse.redirect(
       new URL(getDefaultRouteForRole(role), request.url)
     );

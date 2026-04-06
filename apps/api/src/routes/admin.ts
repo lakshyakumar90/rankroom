@@ -14,6 +14,7 @@ import { Role } from "@repo/types";
 import { supabase } from "../lib/supabase";
 import { ensureUniqueHandle } from "../lib/handles";
 import { z } from "zod";
+import { recomputeStudentIntelligence } from "../services/student-intelligence.service";
 
 const router: ExpressRouter = Router();
 router.use(authenticate, requireRole(Role.SUPER_ADMIN, Role.ADMIN));
@@ -38,7 +39,7 @@ async function findAdminUsers(where: Record<string, unknown>, skip: number, take
       include: {
         profile: true,
         departmentHeaded: { select: { id: true, name: true, code: true } },
-        coordinatedSection: { select: { id: true, name: true, code: true } },
+        coordinatedSections: { select: { id: true, name: true, code: true } },
         enrollments: { include: { section: { include: { department: true } } }, take: 1 },
         teachingAssignments: {
           include: { section: { include: { department: true } }, subject: true },
@@ -64,6 +65,28 @@ async function findAdminUsers(where: Record<string, unknown>, skip: number, take
       take,
     });
   }
+}
+
+async function getSectionDepartmentLabel(sectionId: string | undefined) {
+  if (!sectionId) {
+    return null;
+  }
+
+  return prisma.section.findUnique({
+    where: { id: sectionId },
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      department: {
+        select: {
+          id: true,
+          name: true,
+          code: true,
+        },
+      },
+    },
+  });
 }
 
 router.get("/users", async (req, res, next) => {
@@ -126,6 +149,9 @@ router.post("/users", validate(createUserSchema), async (req, res, next) => {
       throw new AppError(authError?.message ?? "Failed to create auth user", 400);
     }
 
+    const section = await getSectionDepartmentLabel(sectionId);
+    const profileDepartmentLabel = section?.department.name ?? null;
+
     const handle = await ensureUniqueHandle(name);
     const user = await prisma.user.create({
       data: {
@@ -134,7 +160,13 @@ router.post("/users", validate(createUserSchema), async (req, res, next) => {
         name,
         role,
         isVerified: true,
-        profile: { create: { handle } },
+        profile: {
+          create: {
+            handle,
+            department: profileDepartmentLabel,
+            skills: [],
+          },
+        },
         ...(role === Role.STUDENT ? { leaderboard: { create: {} }, studentProfile: { create: {} } } : {}),
       },
       include: { profile: true, studentProfile: true },
@@ -161,6 +193,13 @@ router.post("/users", validate(createUserSchema), async (req, res, next) => {
           sectionId,
         })),
         skipDuplicates: true,
+      });
+    }
+
+    if (role === Role.CLASS_COORDINATOR && sectionId) {
+      await prisma.section.update({
+        where: { id: sectionId },
+        data: { coordinatorId: user.id },
       });
     }
 
@@ -195,6 +234,7 @@ router.patch("/users/:id", async (req, res, next) => {
       isPublic,
       sectionId,
       departmentId,
+      subjectIds,
     } = req.body as {
       name?: string;
       githubUsername?: string | null;
@@ -206,7 +246,11 @@ router.patch("/users/:id", async (req, res, next) => {
       isPublic?: boolean;
       sectionId?: string | null;
       departmentId?: string | null;
+      subjectIds?: string[];
     };
+
+    const section = await getSectionDepartmentLabel(sectionId ?? undefined);
+    const derivedDepartment = section?.department.name ?? undefined;
 
     const nextHandle =
       typeof handle === "string" && handle.trim().length > 0
@@ -229,6 +273,7 @@ router.patch("/users/:id", async (req, res, next) => {
           ...(college !== undefined ? { college } : {}),
           ...(batch !== undefined ? { batch } : {}),
           ...(department !== undefined ? { department } : {}),
+          ...(derivedDepartment !== undefined ? { department: derivedDepartment } : {}),
           ...(isPublic !== undefined ? { isPublic } : {}),
         },
         create: {
@@ -267,11 +312,43 @@ router.patch("/users/:id", async (req, res, next) => {
       }
     }
 
+    if ((target.role === Role.TEACHER || target.role === Role.CLASS_COORDINATOR) && sectionId !== undefined) {
+      await prisma.teacherSubjectAssignment.deleteMany({ where: { teacherId: target.id } });
+      if (sectionId && subjectIds?.length) {
+        await prisma.teacherSubjectAssignment.createMany({
+          data: subjectIds.map((subjectId) => ({
+            teacherId: target.id,
+            subjectId,
+            sectionId,
+          })),
+          skipDuplicates: true,
+        });
+      }
+    }
+
+    if (target.role === Role.CLASS_COORDINATOR && sectionId !== undefined) {
+      await prisma.section.updateMany({
+        where: { coordinatorId: target.id },
+        data: { coordinatorId: null },
+      });
+
+      if (sectionId) {
+        await prisma.section.update({
+          where: { id: sectionId },
+          data: { coordinatorId: target.id },
+        });
+      }
+    }
+
     const data = await prisma.user.findUnique({
       where: { id: target.id },
       include: {
         profile: true,
         enrollments: { include: { section: { include: { department: true } } }, take: 1 },
+        teachingAssignments: {
+          include: { subject: true, section: { include: { department: true } } },
+        },
+        departmentHeaded: { select: { id: true, name: true, code: true } },
       },
     });
 
@@ -464,6 +541,73 @@ router.post("/classes/:id/subjects", validate(adminCreateSubjectSchema), async (
     }
 
     res.status(201).json({ success: true, data: subject });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ── Reminder job monitoring ────────────────────────────────────────────────────
+router.get("/reminders/jobs", async (req, res, next) => {
+  try {
+    const { status, page = "1", limit = "20" } = req.query as Record<string, string>;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const [jobs, total] = await Promise.all([
+      prisma.scheduledNotification.findMany({
+        where: status ? { status: status as "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "SKIPPED" } : undefined,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: parseInt(limit),
+      }),
+      prisma.scheduledNotification.count({ where: status ? { status: status as "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "SKIPPED" } : undefined }),
+    ]);
+
+    res.json({
+      success: true,
+      data: jobs,
+      pagination: { page: parseInt(page), limit: parseInt(limit), total, totalPages: Math.ceil(total / parseInt(limit)) },
+    });
+  } catch (err) { next(err); }
+});
+
+router.get("/reminders/failures", async (_req, res, next) => {
+  try {
+    const failures = await prisma.scheduledNotification.findMany({
+      where: { status: "FAILED" },
+      orderBy: { failedAt: "desc" },
+      take: 50,
+    });
+    res.json({ success: true, data: failures });
+  } catch (err) { next(err); }
+});
+
+router.get("/reminders/runs", async (req, res, next) => {
+  try {
+    const runs = await prisma.reminderJobRun.findMany({
+      orderBy: { ranAt: "desc" },
+      take: parseInt((req.query["limit"] as string) ?? "50"),
+    });
+    res.json({ success: true, data: runs });
+  } catch (err) { next(err); }
+});
+
+router.post("/reminders/retry/:jobId", async (req, res, next) => {
+  try {
+    const job = await prisma.scheduledNotification.findUnique({ where: { id: req.params.jobId } });
+    if (!job) throw new AppError("Job not found", 404);
+
+    await prisma.scheduledNotification.update({
+      where: { id: req.params.jobId },
+      data: { status: "PENDING", failedAt: null, lastError: null, scheduledFor: new Date() },
+    });
+    res.json({ success: true, message: "Job queued for retry" });
+  } catch (err) { next(err); }
+});
+
+router.post("/analytics/skills/recompute/:userId", async (req, res, next) => {
+  try {
+    const data = await recomputeStudentIntelligence(req.params.userId);
+    res.json({ success: true, data });
   } catch (error) {
     next(error);
   }

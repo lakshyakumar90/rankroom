@@ -25,6 +25,11 @@ import notificationRoutes from "./routes/notifications";
 import analyticsRoutes from "./routes/analytics";
 import subjectRoutes from "./routes/subjects";
 import searchRoutes from "./routes/search";
+import languageRoutes from "./routes/languages";
+import aiRoutes from "./routes/ai";
+import certificateRoutes from "./routes/certificates";
+import resultsRoutes from "./routes/results";
+import settingsRoutes from "./routes/settings";
 
 export function createApp(): Express {
   const app = express();
@@ -112,6 +117,11 @@ export function createApp(): Express {
   app.use("/api/analytics", analyticsRoutes);
   app.use("/api/subjects", subjectRoutes);
   app.use("/api/search", searchRoutes);
+  app.use("/api/languages", languageRoutes);
+  app.use("/api/ai", executeLimiter, aiRoutes);
+  app.use("/api/certificates", certificateRoutes);
+  app.use("/api/results", resultsRoutes);
+  app.use("/api/settings", settingsRoutes);
 
   // 404 handler
   app.use(notFound);

@@ -1,104 +1,64 @@
-import { type ClassValue, clsx } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { clsx, type ClassValue } from "clsx"
+import { twMerge } from "tailwind-merge"
 
 export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
+  return twMerge(clsx(inputs))
 }
 
-export function formatDate(date: string | Date) {
-  return new Intl.DateTimeFormat("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  }).format(new Date(date));
+export function formatDate(date: string | Date | null | undefined): string {
+  if (!date) return "";
+  return new Date(date).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
-export function formatDateTime(date: string | Date) {
-  return new Intl.DateTimeFormat("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(date));
+export function formatDateTime(date: string | Date | null | undefined): string {
+  if (!date) return "";
+  return new Date(date).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
-export function formatRelativeTime(date: string | Date) {
-  const now = Date.now();
-  const then = new Date(date).getTime();
-  const diff = now - then;
-
-  if (diff < 60000) return "just now";
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-  return `${Math.floor(diff / 86400000)}d ago`;
+export function formatRelativeTime(date: string | Date | null | undefined): string {
+  if (!date) return "";
+  const now = new Date();
+  const past = new Date(date);
+  const diffInSeconds = Math.floor((now.getTime() - past.getTime()) / 1000);
+  
+  if (diffInSeconds < 60) return "just now";
+  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)} minutes ago`;
+  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)} hours ago`;
+  if (diffInSeconds < 2592000) return `${Math.floor(diffInSeconds / 86400)} days ago`;
+  if (diffInSeconds < 31536000) return `${Math.floor(diffInSeconds / 2592000)} months ago`;
+  return `${Math.floor(diffInSeconds / 31536000)} years ago`;
 }
 
-export function getInitials(name: string) {
-  return name
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-}
-
-export function formatPoints(points: number) {
-  if (points >= 1000) return `${(points / 1000).toFixed(1)}k`;
-  return points.toString();
-}
-
-export function formatRoleLabel(role?: string | null) {
-  return role ? role.replaceAll("_", " ") : "Workspace";
-}
-
-export function slugify(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .replace(/-{2,}/g, "-");
-}
-
-export function getDifficultyColor(difficulty: string) {
-  switch (difficulty) {
-    case "EASY": return "text-emerald-500";
-    case "MEDIUM": return "text-amber-500";
-    case "HARD": return "text-red-500";
-    default: return "text-muted-foreground";
-  }
-}
-
-export function getStatusColor(status: string) {
-  switch (status) {
-    case "ACCEPTED": return "text-emerald-500";
-    case "WRONG_ANSWER": return "text-red-500";
-    case "TIME_LIMIT_EXCEEDED": return "text-amber-500";
-    case "COMPILATION_ERROR": return "text-orange-500";
-    case "RUNTIME_ERROR": return "text-red-400";
-    case "PENDING": return "text-muted-foreground";
-    default: return "text-muted-foreground";
-  }
-}
-
-export function formatRuntime(ms?: number | null) {
-  if (!ms) return "—";
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(2)}s`;
-}
-
-export function formatMemory(kb?: number | null) {
-  if (!kb) return "—";
-  if (kb < 1024) return `${kb} KB`;
+export function formatMemory(kb?: number | null, ...args: any[]): string {
+  if (kb === undefined || kb === null) return "0 KB";
+  if (kb < 1024) return `${Math.round(kb)} KB`;
   return `${(kb / 1024).toFixed(1)} MB`;
 }
 
-export function getContestStatusVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
-  switch (status) {
-    case "LIVE": return "default";
-    case "UPCOMING": return "secondary";
-    case "ENDED": return "outline";
-    default: return "outline";
-  }
+export function formatRuntime(ms?: number | null, ...args: any[]): string {
+  if (ms === undefined || ms === null) return "0 ms";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(2)} s`;
+}
+
+export function formatPoints(points: number): string {
+  return new Intl.NumberFormat('en-US').format(points) + " pts";
+}
+
+export function formatRoleLabel(role?: string | null): string {
+  if (!role) return "";
+  return role.charAt(0).toUpperCase() + role.slice(1).toLowerCase().replace(/_/g, ' ');
+}
+
+export function getDifficultyColor(difficulty: string): "default" | "secondary" | "destructive" | "outline" {
+  const diff = difficulty.toLowerCase();
+  if (diff === "easy") return "secondary";
+  if (diff === "medium") return "default";
+  if (diff === "hard") return "destructive";
+  return "outline";
+}
+
+export function getInitials(name: string): string {
+  if (!name) return "?";
+  return name.substring(0, 2).toUpperCase();
 }

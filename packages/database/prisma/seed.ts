@@ -12,6 +12,7 @@ import {
 } from "../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -19,6 +20,92 @@ const pool = new Pool({
 
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
+
+/** Default dev password when SEED_USER_PASSWORD is unset (safe for local only). */
+const DEFAULT_SEED_USER_PASSWORD = "RankRoomSeed#2026";
+
+type SeedAuth = {
+  password: string;
+  ensureAuthUser: (email: string, name: string, role: Role) => Promise<string>;
+};
+
+function createSeedAuth(): SeedAuth {
+  const url = process.env.SUPABASE_URL?.trim();
+  const serviceKey = process.env.SUPABASE_SERVICE_KEY?.trim();
+  if (!url || !serviceKey) {
+    throw new Error(
+      "Seed auth: set SUPABASE_URL and SUPABASE_SERVICE_KEY in packages/database/.env (Supabase → Project Settings → API → service_role)."
+    );
+  }
+  const password = process.env.SEED_USER_PASSWORD?.trim() || DEFAULT_SEED_USER_PASSWORD;
+  const supabase = createClient(url, serviceKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  async function ensureAuthUser(email: string, name: string, role: Role): Promise<string> {
+    const user_metadata = { name, full_name: name, role };
+    const { data, error } = await supabase.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata,
+    });
+
+    if (!error && data.user) {
+      return data.user.id;
+    }
+
+    const msg = (error?.message ?? "").toLowerCase();
+    const duplicate =
+      msg.includes("already registered") ||
+      msg.includes("already exists") ||
+      msg.includes("duplicate") ||
+      (error as { status?: number } | undefined)?.status === 422;
+
+    if (!duplicate) {
+      throw new Error(`Supabase admin.createUser failed for ${email}: ${error?.message ?? "unknown error"}`);
+    }
+
+    const existingId = await findAuthUserIdByEmail(supabase, email);
+    if (!existingId) {
+      throw new Error(
+        `Auth user for ${email} exists but was not found. Delete them in Supabase Dashboard → Authentication → Users, or fix listUsers. Original: ${error?.message}`
+      );
+    }
+
+    const { error: updErr } = await supabase.auth.admin.updateUserById(existingId, {
+      password,
+      email_confirm: true,
+      user_metadata,
+    });
+    if (updErr) {
+      throw new Error(`Supabase admin.updateUserById failed for ${email}: ${updErr.message}`);
+    }
+    return existingId;
+  }
+
+  return { password, ensureAuthUser };
+}
+
+async function findAuthUserIdByEmail(supabase: SupabaseClient, email: string): Promise<string | null> {
+  const normalized = email.toLowerCase();
+  let page = 1;
+  const perPage = 200;
+  for (;;) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+    if (error) {
+      throw new Error(`listUsers failed: ${error.message}`);
+    }
+    const match = data.users.find((u) => u.email?.toLowerCase() === normalized);
+    if (match) {
+      return match.id;
+    }
+    if (data.users.length < perPage) {
+      return null;
+    }
+    page += 1;
+  }
+}
 
 type CreatedUser = Awaited<ReturnType<typeof createUser>>;
 
@@ -57,7 +144,9 @@ async function resetDatabase() {
   await prisma.department.deleteMany();
 }
 
-async function createUser(input: {
+async function createUser(
+  auth: SeedAuth,
+  input: {
   name: string;
   email: string;
   role: Role;
@@ -95,9 +184,10 @@ async function createUser(input: {
     activityHeatmap?: Record<string, number>;
   };
 }) {
+  const supabaseId = await auth.ensureAuthUser(input.email, input.name, input.role);
   return prisma.user.create({
     data: {
-      supabaseId: `seed-${input.handle}`,
+      supabaseId,
       email: input.email,
       name: input.name,
       role: input.role,
@@ -155,49 +245,51 @@ async function main() {
   console.log("Seeding RankRoom academic platform data...");
   await resetDatabase();
 
-  const superAdmin = await createUser({
+  const seedAuth = createSeedAuth();
+
+  const superAdmin = await createUser(seedAuth, {
     name: "Platform Super Admin",
     email: "superadmin@rankroom.dev",
     role: Role.SUPER_ADMIN,
     handle: "platform-super-admin",
   });
 
-  const admin = await createUser({
+  const admin = await createUser(seedAuth, {
     name: "Institution Admin",
     email: "admin@rankroom.dev",
     role: Role.ADMIN,
     handle: "institution-admin",
   });
 
-  const departmentHead = await createUser({
+  const departmentHead = await createUser(seedAuth, {
     name: "Dr. Meera Sharma",
     email: "meera.sharma@rankroom.dev",
     role: Role.DEPARTMENT_HEAD,
     handle: "meera-sharma",
   });
 
-  const classCoordinator = await createUser({
+  const classCoordinator = await createUser(seedAuth, {
     name: "Prof. Arjun Rao",
     email: "arjun.rao@rankroom.dev",
     role: Role.CLASS_COORDINATOR,
     handle: "arjun-rao",
   });
 
-  const teacherOne = await createUser({
+  const teacherOne = await createUser(seedAuth, {
     name: "Prof. Kavya Nair",
     email: "kavya.nair@rankroom.dev",
     role: Role.TEACHER,
     handle: "kavya-nair",
   });
 
-  const teacherTwo = await createUser({
+  const teacherTwo = await createUser(seedAuth, {
     name: "Prof. Rohan Das",
     email: "rohan.das@rankroom.dev",
     role: Role.TEACHER,
     handle: "rohan-das",
   });
 
-  const studentOne = await createUser({
+  const studentOne = await createUser(seedAuth, {
     name: "Aarav Patel",
     email: "aarav.patel@rankroom.dev",
     role: Role.STUDENT,
@@ -248,7 +340,7 @@ async function main() {
     },
   });
 
-  const studentTwo = await createUser({
+  const studentTwo = await createUser(seedAuth, {
     name: "Diya Menon",
     email: "diya.menon@rankroom.dev",
     role: Role.STUDENT,
@@ -292,7 +384,7 @@ async function main() {
     },
   });
 
-  const studentThree = await createUser({
+  const studentThree = await createUser(seedAuth, {
     name: "Vihaan Gupta",
     email: "vihaan.gupta@rankroom.dev",
     role: Role.STUDENT,
@@ -524,6 +616,190 @@ async function main() {
     },
   });
 
+  const problemThree = await prisma.problem.create({
+    data: {
+      title: "Two Sum",
+      slug: "two-sum",
+      description: "Given an array of integers nums and an integer target, return indices of the two numbers such that they add up to target.",
+      difficulty: Difficulty.EASY,
+      tags: ["array", "hash-map"],
+      constraints: "2 <= nums.length <= 10^4",
+      inputFormat: "nums as int[] and target as int",
+      outputFormat: "space-separated indices",
+      createdById: teacherOne.id,
+      isPublished: true,
+      points: 50,
+      functionName: "twoSum",
+      parameterNames: ["nums", "target"],
+      parameterTypes: [
+        { name: "nums", type: "int[]" },
+        { name: "target", type: "int" },
+      ],
+      returnType: "int[]",
+      compareMode: "IGNORE_TRAILING_WHITESPACE",
+      timeLimitMs: 2000,
+      memoryLimitKb: 262144,
+      starterCode: {
+        cpp: "class Solution {\npublic:\n    vector<int> twoSum(vector<int>& nums, int target) {\n        return {};\n    }\n};",
+        python: "class Solution:\n    def twoSum(self, nums: list[int], target: int) -> list[int]:\n        return []",
+        java: "class Solution {\n    public int[] twoSum(int[] nums, int target) {\n        return new int[]{};\n    }\n}",
+      },
+    },
+  });
+
+  const problemFour = await prisma.problem.create({
+    data: {
+      title: "Reverse String",
+      slug: "reverse-string",
+      description: "Given a string s, return the reversed string.",
+      difficulty: Difficulty.EASY,
+      tags: ["string", "two-pointers"],
+      constraints: "1 <= s.length <= 10^5",
+      inputFormat: "s as string",
+      outputFormat: "reversed string",
+      createdById: teacherOne.id,
+      isPublished: true,
+      points: 40,
+      functionName: "reverseString",
+      parameterNames: ["s"],
+      parameterTypes: [{ name: "s", type: "string" }],
+      returnType: "string",
+      compareMode: "IGNORE_TRAILING_WHITESPACE",
+      timeLimitMs: 1000,
+      memoryLimitKb: 262144,
+      starterCode: {
+        cpp: "class Solution {\npublic:\n    string reverseString(string s) {\n        return s;\n    }\n};",
+        python: "class Solution:\n    def reverseString(self, s: str) -> str:\n        return s",
+        java: "class Solution {\n    public String reverseString(String s) {\n        return s;\n    }\n}",
+      },
+    },
+  });
+
+  const problemFive = await prisma.problem.create({
+    data: {
+      title: "Maximum Subarray",
+      slug: "maximum-subarray",
+      description: "Given an integer array nums, find the contiguous subarray with the largest sum and return its sum.",
+      difficulty: Difficulty.MEDIUM,
+      tags: ["array", "dynamic-programming"],
+      constraints: "1 <= nums.length <= 10^5",
+      inputFormat: "nums as int[]",
+      outputFormat: "maximum sum as integer",
+      createdById: teacherOne.id,
+      isPublished: true,
+      points: 100,
+      functionName: "maxSubArray",
+      parameterNames: ["nums"],
+      parameterTypes: [{ name: "nums", type: "int[]" }],
+      returnType: "int",
+      compareMode: "IGNORE_TRAILING_WHITESPACE",
+      timeLimitMs: 2000,
+      memoryLimitKb: 262144,
+      starterCode: {
+        cpp: "class Solution {\npublic:\n    int maxSubArray(vector<int>& nums) {\n        return 0;\n    }\n};",
+        python: "class Solution:\n    def maxSubArray(self, nums: list[int]) -> int:\n        return 0",
+        java: "class Solution {\n    public int maxSubArray(int[] nums) {\n        return 0;\n    }\n}",
+      },
+    },
+  });
+
+  // ── Hello World (stdin/stdout, no wrapper needed) ────────────────────────────
+  const problemHello = await prisma.problem.upsert({
+    where: { slug: "hello-world" },
+    update: {},
+    create: {
+      title: "Hello World",
+      slug: "hello-world",
+      description: "Print 'Hello, World!' to the console. This is the simplest problem to verify your language setup.",
+      difficulty: Difficulty.EASY,
+      tags: ["basics", "stdin", "stdout"],
+      constraints: "No input",
+      inputFormat: "No input",
+      outputFormat: "Hello, World!",
+      createdById: teacherOne.id,
+      isPublished: true,
+      points: 10,
+      // No functionName / parameterTypes → uses raw stdin/stdout mode
+      compareMode: "IGNORE_TRAILING_WHITESPACE",
+      timeLimitMs: 1000,
+      memoryLimitKb: 128000,
+      starterCode: {
+        cpp: '#include <iostream>\nusing namespace std;\nint main() {\n    cout << "Hello, World!" << endl;\n    return 0;\n}',
+        python: 'print("Hello, World!")',
+        java: 'public class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello, World!");\n    }\n}',
+        javascript: 'console.log("Hello, World!");',
+        typescript: 'console.log("Hello, World!");',
+      },
+    },
+  });
+
+  // ── Fibonacci Nth Term ────────────────────────────────────────────────────────
+  const problemFib = await prisma.problem.upsert({
+    where: { slug: "fibonacci-nth-term" },
+    update: {},
+    create: {
+      title: "Fibonacci Nth Term",
+      slug: "fibonacci-nth-term",
+      description: "Given an integer n (0-indexed), return the nth Fibonacci number.\n\nThe Fibonacci sequence starts: 0, 1, 1, 2, 3, 5, 8, 13, 21, ...",
+      difficulty: Difficulty.EASY,
+      tags: ["math", "basics", "dynamic-programming"],
+      constraints: "0 <= n <= 30",
+      inputFormat: "A single integer n",
+      outputFormat: "The nth Fibonacci number",
+      createdById: teacherOne.id,
+      isPublished: true,
+      points: 30,
+      functionName: "fibonacci",
+      parameterNames: ["n"],
+      parameterTypes: [{ name: "n", type: "int" }],
+      returnType: "int",
+      compareMode: "IGNORE_TRAILING_WHITESPACE",
+      timeLimitMs: 1000,
+      memoryLimitKb: 128000,
+      starterCode: {
+        cpp: "class Solution {\npublic:\n    int fibonacci(int n) {\n        // Write your code here\n        return 0;\n    }\n};",
+        python: "class Solution:\n    def fibonacci(self, n: int) -> int:\n        # Write your code here\n        return 0",
+        java: "class Solution {\n    public int fibonacci(int n) {\n        // Write your code here\n        return 0;\n    }\n}",
+        javascript: "class Solution {\n    fibonacci(n) {\n        // Write your code here\n        return 0;\n    }\n}",
+        typescript: "class Solution {\n    fibonacci(n: number): number {\n        // Write your code here\n        return 0;\n    }\n}",
+      },
+    },
+  });
+
+  const problemSix = await prisma.problem.upsert({
+    where: { slug: "add-two-numbers" },
+    update: {},
+    create: {
+      title: "Add Two Numbers",
+      slug: "add-two-numbers",
+      description: "Write a function that takes two integers as input and returns their sum. This is a simple arithmetic problem to get you started with coding challenges.",
+      difficulty: Difficulty.EASY,
+      tags: ["math", "basics", "arithmetic"],
+      constraints: "-10^9 <= a, b <= 10^9",
+      inputFormat: "Two integers a and b",
+      outputFormat: "Sum of a and b as integer",
+      createdById: teacherOne.id,
+      isPublished: true,
+      points: 30,
+      functionName: "addNumbers",
+      parameterNames: ["a", "b"],
+      parameterTypes: [
+        { name: "a", type: "int" },
+        { name: "b", type: "int" },
+      ],
+      returnType: "int",
+      compareMode: "IGNORE_TRAILING_WHITESPACE",
+      timeLimitMs: 1000,
+      memoryLimitKb: 262144,
+      starterCode: {
+        cpp: "class Solution {\npublic:\n    int addNumbers(int a, int b) {\n        // Write your code here\n        return 0;\n    }\n};",
+        python: "class Solution:\n    def addNumbers(self, a: int, b: int) -> int:\n        # Write your code here\n        return 0",
+        java: "class Solution {\n    public int addNumbers(int a, int b) {\n        // Write your code here\n        return 0;\n    }\n}",
+        javascript: "class Solution {\n    addNumbers(a, b) {\n        // Write your code here\n        return 0;\n    }\n}",
+      },
+    },
+  });
+
   await prisma.testCase.createMany({
     data: [
       {
@@ -550,6 +826,111 @@ async function main() {
         expectedOutput: "3 1 2 4",
         isHidden: true,
       },
+      {
+        problemId: problemThree.id,
+        input: JSON.stringify({ nums: [2, 7, 11, 15], target: 9 }),
+        expectedOutput: "0 1",
+        isSample: true,
+      },
+      {
+        problemId: problemThree.id,
+        input: JSON.stringify({ nums: [3, 2, 4], target: 6 }),
+        expectedOutput: "1 2",
+        isSample: true,
+      },
+      {
+        problemId: problemThree.id,
+        input: JSON.stringify({ nums: [3, 3], target: 6 }),
+        expectedOutput: "0 1",
+        isHidden: true,
+      },
+      {
+        problemId: problemFour.id,
+        input: JSON.stringify({ s: "hello" }),
+        expectedOutput: "olleh",
+        isSample: true,
+      },
+      {
+        problemId: problemFour.id,
+        input: JSON.stringify({ s: "Hannah" }),
+        expectedOutput: "hannaH",
+        isHidden: true,
+      },
+      {
+        problemId: problemFive.id,
+        input: JSON.stringify({ nums: [-2, 1, -3, 4, -1, 2, 1, -5, 4] }),
+        expectedOutput: "6",
+        isSample: true,
+      },
+      {
+        problemId: problemFive.id,
+        input: JSON.stringify({ nums: [1] }),
+        expectedOutput: "1",
+        isSample: true,
+      },
+      {
+        problemId: problemFive.id,
+        input: JSON.stringify({ nums: [5, 4, -1, 7, 8] }),
+        expectedOutput: "23",
+        isHidden: true,
+      },
+      // Add Two Numbers test cases
+      {
+        problemId: problemSix.id,
+        input: JSON.stringify({ a: 5, b: 3 }),
+        expectedOutput: "8",
+        isSample: true,
+      },
+      {
+        problemId: problemSix.id,
+        input: JSON.stringify({ a: 0, b: 0 }),
+        expectedOutput: "0",
+        isSample: true,
+      },
+      {
+        problemId: problemSix.id,
+        input: JSON.stringify({ a: -5, b: 10 }),
+        expectedOutput: "5",
+        isSample: true,
+      },
+      {
+        problemId: problemSix.id,
+        input: JSON.stringify({ a: 100, b: 200 }),
+        expectedOutput: "300",
+        isHidden: true,
+      },
+      {
+        problemId: problemSix.id,
+        input: JSON.stringify({ a: -15, b: -25 }),
+        expectedOutput: "-40",
+        isHidden: true,
+      },
+      {
+        problemId: problemSix.id,
+        input: JSON.stringify({ a: 1000000, b: 2000000 }),
+        expectedOutput: "3000000",
+        isHidden: true,
+      },
+    ],
+  });
+
+  // Hello World test cases
+  await prisma.testCase.createMany({
+    skipDuplicates: true,
+    data: [
+      { problemId: problemHello.id, input: "", expectedOutput: "Hello, World!", isSample: true },
+    ],
+  });
+
+  // Fibonacci test cases
+  await prisma.testCase.createMany({
+    skipDuplicates: true,
+    data: [
+      { problemId: problemFib.id, input: JSON.stringify({ n: 0 }), expectedOutput: "0", isSample: true },
+      { problemId: problemFib.id, input: JSON.stringify({ n: 1 }), expectedOutput: "1", isSample: true },
+      { problemId: problemFib.id, input: JSON.stringify({ n: 5 }), expectedOutput: "5", isSample: true },
+      { problemId: problemFib.id, input: JSON.stringify({ n: 10 }), expectedOutput: "55", isHidden: true },
+      { problemId: problemFib.id, input: JSON.stringify({ n: 20 }), expectedOutput: "6765", isHidden: true },
     ],
   });
 
@@ -787,6 +1168,12 @@ async function main() {
     { role: studentTwo.role, email: studentTwo.email },
     { role: studentThree.role, email: studentThree.email },
   ]);
+  console.log("\nSupabase Auth: sign in at /login with any email above.");
+  if (process.env.SEED_USER_PASSWORD) {
+    console.log("Password: value of SEED_USER_PASSWORD in .env (not printed).");
+  } else {
+    console.log(`Password: ${DEFAULT_SEED_USER_PASSWORD} (set SEED_USER_PASSWORD to override).`);
+  }
 }
 
 main()

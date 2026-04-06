@@ -51,12 +51,32 @@ export enum ContestType {
   PUBLIC = "PUBLIC",
   PRIVATE = "PRIVATE",
   INSTITUTIONAL = "INSTITUTIONAL",
+  SUBJECT = "SUBJECT",
+  DEPARTMENT = "DEPARTMENT",
+  INSTITUTION = "INSTITUTION",
+}
+
+export enum ContestScope {
+  GLOBAL = "GLOBAL",
+  DEPARTMENT = "DEPARTMENT",
+  SECTION = "SECTION",
 }
 
 export enum ContestStatus {
+  DRAFT = "DRAFT",
   UPCOMING = "UPCOMING",
+  SCHEDULED = "SCHEDULED",
+  REGISTRATION_OPEN = "REGISTRATION_OPEN",
   LIVE = "LIVE",
+  FROZEN = "FROZEN",
   ENDED = "ENDED",
+  RESULTS_PUBLISHED = "RESULTS_PUBLISHED",
+}
+
+export enum ProblemScope {
+  GLOBAL = "GLOBAL",
+  DEPARTMENT = "DEPARTMENT",
+  SECTION = "SECTION",
 }
 
 export enum SkillLevel {
@@ -94,6 +114,7 @@ export enum NotificationType {
   HACKATHON_CREATED = "HACKATHON_CREATED",
   HACKATHON_REGISTRATION_OPEN = "HACKATHON_REGISTRATION_OPEN",
   HACKATHON_DEADLINE_APPROACHING = "HACKATHON_DEADLINE_APPROACHING",
+  HACKATHON_STARTING_SOON = "HACKATHON_STARTING_SOON",
   COMPETITION_CREATED = "COMPETITION_CREATED",
   SUBMISSION_JUDGED = "SUBMISSION_JUDGED",
   SUBMISSION_ACCEPTED = "SUBMISSION_ACCEPTED",
@@ -102,6 +123,84 @@ export enum NotificationType {
   ATTENDANCE_LOW = "ATTENDANCE_LOW",
   ANNOUNCEMENT = "ANNOUNCEMENT",
   GENERAL = "GENERAL",
+  COACH_ADVICE_READY = "COACH_ADVICE_READY",
+}
+
+export type SkillKey =
+  | "arrays"
+  | "strings"
+  | "hashing"
+  | "sorting"
+  | "binary_search"
+  | "two_pointers"
+  | "sliding_window"
+  | "linked_lists"
+  | "stacks_queues"
+  | "trees"
+  | "bst"
+  | "heaps"
+  | "graphs"
+  | "greedy"
+  | "dp"
+  | "backtracking"
+  | "recursion"
+  | "math"
+  | "bit_manipulation"
+  | "system_design";
+
+export interface SkillScorePoint {
+  key: SkillKey;
+  label: string;
+  score: number;
+  trend: number;
+  lastUpdated?: string | null;
+}
+
+export interface UserSkillProfile {
+  id: string;
+  userId: string;
+  skills: Partial<Record<SkillKey, number>>;
+  activityScore: number;
+  consistencyScore: number;
+  lastComputedAt: string;
+}
+
+export interface UserSkillSnapshot {
+  id: string;
+  userId: string;
+  snapshotDate: string;
+  skillsSnapshot: Partial<Record<SkillKey, number>>;
+  activityScore: number;
+  consistencyScore: number;
+  createdAt: string;
+}
+
+export interface CoachAdvice {
+  id: string;
+  userId: string;
+  adviceDate: string;
+  warning: string;
+  motivation: string;
+  tasks: string[];
+  source: string;
+  createdAt: string;
+}
+
+export interface SkillGraphResponse {
+  skills: SkillScorePoint[];
+  summary: {
+    activityScore: number;
+    consistencyScore: number;
+    strongestSkills: SkillScorePoint[];
+    weakestSkills: SkillScorePoint[];
+  };
+  history: Array<{
+    date: string;
+    skillsSnapshot: Partial<Record<SkillKey, number>>;
+    activityScore: number;
+    consistencyScore: number;
+  }>;
+  coachAdvice: CoachAdvice | null;
 }
 
 export type PermissionKey =
@@ -132,15 +231,25 @@ export type PermissionKey =
   | "contests:create"
   | "contests:delete"
   | "contests:participate"
+  | "events:manage-participants"
+  | "events:view-participants"
   | "hackathons:create"
   | "hackathons:update"
   | "hackathons:delete"
   | "hackathons:register"
+  | "teams:create"
+  | "teams:approve-requests"
+  | "sections:assign-coordinator"
+  | "sections:assign-teacher"
+  | "subjects:update"
+  | "subjects:archive"
   | "problems:create"
   | "problems:delete"
   | "profile:update:own"
   | "profile:view:public"
   | "profile:view:private"
+  | "skills:update:own"
+  | "settings:update:own"
   | "leaderboard:view"
   | "analytics:platform"
   | "analytics:department"
@@ -148,7 +257,9 @@ export type PermissionKey =
   | "analytics:own"
   | "notifications:send:platform"
   | "notifications:send:department"
-  | "notifications:send:section";
+  | "notifications:send:section"
+  | "notifications:view:own-summary"
+  | "reminders:monitor";
 
 export interface ApiResponse<T = unknown> {
   success: boolean;
@@ -210,6 +321,7 @@ export interface ProfilePublic {
   userId: string;
   handle?: string | null;
   bio?: string | null;
+  phoneNumber?: string | null;
   skills: string[];
   socialLinks?: Record<string, string> | null;
   college?: string | null;
@@ -224,6 +336,7 @@ export interface ProfilePublic {
 export interface StudentProfile {
   id: string;
   userId: string;
+  phoneNumber?: string | null;
   leetcodeUsername?: string | null;
   githubUsername?: string | null;
   codechefUsername?: string | null;
@@ -244,10 +357,14 @@ export interface StudentProfile {
   codeforcesRank?: string | null;
   cgpa?: number | null;
   activityHeatmap: Record<string, number>;
+  currentStreak: number;
+  longestStreak: number;
+  lastActiveDate?: string | null;
   lastSyncedAt?: string | null;
   bio?: string | null;
   resumeUrl?: string | null;
   resumeFilename?: string | null;
+  avatarPath?: string | null;
   isPublic: boolean;
   skills: Skill[];
   projects: Project[];
@@ -413,15 +530,53 @@ export interface Problem {
   description: string;
   difficulty: Difficulty;
   tags: string[];
+  scope?: ProblemScope;
+  scopeSectionId?: string | null;
+  scopeDepartmentId?: string | null;
   constraints?: string | null;
   inputFormat?: string | null;
   outputFormat?: string | null;
   sampleInput?: string | null;
   sampleOutput?: string | null;
+  acceptedSubmissions?: number;
+  totalSubmissions?: number;
+  boilerplates?: ProblemBoilerplate[];
+  hints?: ProblemHint[];
+  editorial?: ProblemEditorial | null;
+  normalizedTags?: ProblemTagRef[];
   createdById: string;
   isPublished: boolean;
   points: number;
   createdAt: string;
+}
+
+export interface ProblemBoilerplate {
+  id: string;
+  problemId: string;
+  language: string;
+  code: string;
+}
+
+export interface ProblemHint {
+  id: string;
+  problemId: string;
+  tier: number;
+  content: string;
+}
+
+export interface ProblemEditorial {
+  id: string;
+  problemId: string;
+  summary?: string | null;
+  approach?: string | null;
+  complexity?: string | null;
+  fullEditorial: string;
+}
+
+export interface ProblemTagRef {
+  id: string;
+  name: string;
+  slug: string;
 }
 
 export interface TestCase {
@@ -453,6 +608,9 @@ export interface Submission {
   runtime?: number | null;
   memory?: number | null;
   verdict?: SubmissionVerdict[] | null;
+  testResults?: SubmissionVerdict[] | null;
+  compileError?: string | null;
+  stderr?: string | null;
   createdAt: string;
 }
 
@@ -463,8 +621,11 @@ export interface Contest {
   startTime: string;
   endTime: string;
   type: ContestType;
+  scope: ContestScope;
   status: ContestStatus;
   createdById: string;
+  departmentId?: string | null;
+  subjectId?: string | null;
   sectionId?: string | null;
   audience?: Array<{ studentId: string }>;
   rules?: string | null;
@@ -478,6 +639,11 @@ export interface ContestStanding {
   penalty: number;
   rank?: number | null;
   solvedCount: number;
+  acceptedCount: number;
+  wrongCount: number;
+  solveTimeSeconds: number;
+  perProblemResults?: ContestProblemResult[];
+  lastAcceptedTime?: string | null;
   lastSubmitTime?: string | null;
   user: UserPublic;
 }
@@ -491,12 +657,56 @@ export interface LeaderboardEntry {
   hardSolved: number;
   contestsParticipated: number;
   rank?: number | null;
+  streakScore?: number;
+  currentStreak?: number;
+  longestStreak?: number;
   user: UserPublic;
+}
+
+export interface ContestProblemResult {
+  problemId: string;
+  solved: boolean;
+  acceptedCount: number;
+  wrongCount: number;
+  solveTimeSeconds?: number | null;
+  acceptedAt?: string | null;
+}
+
+export interface LeaderboardScopedEntry {
+  userId: string;
+  rank: number;
+  totalScore: number;
+  codingScore: number;
+  cgpaScore: number;
+  assignmentScore: number;
+  hackathonScore: number;
+  profileScore: number;
+  externalScore: number;
+  streakScore: number;
+  currentStreak: number;
+  longestStreak: number;
+  lastActiveDate?: string | null;
+  student: UserPublic & {
+    phoneNumber?: string | null;
+    githubUsername?: string | null;
+  };
+}
+
+export interface LeaderboardScopedResponse {
+  items: LeaderboardScopedEntry[];
+  self?: LeaderboardScopedEntry | null;
+  pagination: Pagination;
+  viewerMode: "restricted" | "full";
+  scope: "global" | "department" | "section";
+  scopeId?: string | null;
+  filter: "overall" | "coding" | "academic" | "profile" | "external";
+  lastUpdatedAt?: string | null;
 }
 
 export interface HackathonEligibility {
   isEligible: boolean;
   reason: string;
+  unmetCriteria?: string[];
   missingSkills?: string[];
   currentProjects?: number;
   currentLeetcode?: number;
@@ -533,7 +743,23 @@ export interface HackathonRegistration {
   team?: HackathonTeam | null;
   isEligible: boolean;
   eligibilityNote?: string | null;
+  phoneNumberSnapshot?: string | null;
+  avatarUrlSnapshot?: string | null;
   registeredAt: string;
+}
+
+export interface HackathonWinnerEntry {
+  id: string;
+  hackathonId: string;
+  rank: number;
+  teamName: string;
+  projectTitle?: string | null;
+  submissionUrl?: string | null;
+  memberSnapshot: Array<{ name: string; email?: string | null; phoneNumber?: string | null; avatar?: string | null }>;
+  notes?: string | null;
+  addedById: string;
+  addedAt: string;
+  updatedAt: string;
 }
 
 export interface Hackathon {
@@ -559,8 +785,15 @@ export interface Hackathon {
   updatedAt: string;
   teams?: HackathonTeam[];
   registrations?: HackathonRegistration[];
+  winnerEntries?: HackathonWinnerEntry[];
   audience?: Array<{ studentId: string }>;
   eligibility?: HackathonEligibility;
+}
+
+export interface ParticipationReadiness {
+  ready: boolean;
+  missingFields: Array<"phoneNumber" | "avatar">;
+  message: string;
 }
 
 export interface CompetitionRegistration {
@@ -612,6 +845,13 @@ export interface SectionLeaderboardEntry {
   contestWins?: number;
   lastComputedAt: string;
   updatedAt: string;
+}
+
+export interface RestrictedLeaderboardResponse<T> {
+  items: T[];
+  self?: T | null;
+  pagination: Pagination;
+  viewerMode: "restricted" | "full";
 }
 
 export interface SectionLeaderboardResponse {
@@ -698,12 +938,7 @@ export interface SocketEvents {
 export const SUPPORTED_LANGUAGES = [
   { id: "cpp", name: "C++", judge0Id: 54 },
   { id: "c", name: "C", judge0Id: 50 },
-  { id: "java", name: "Java", judge0Id: 62 },
   { id: "python", name: "Python 3", judge0Id: 71 },
-  { id: "javascript", name: "JavaScript (Node.js)", judge0Id: 63 },
-  { id: "typescript", name: "TypeScript", judge0Id: 74 },
-  { id: "go", name: "Go", judge0Id: 60 },
-  { id: "rust", name: "Rust", judge0Id: 73 },
 ] as const;
 
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number]["id"];
