@@ -118,7 +118,14 @@ function MiniHeatmap({ heatmap }: { heatmap: Record<string, number> }) {
 
 // ─── Platform View (Admin / Super Admin) ──────────────────────────────────────
 function PlatformView({ data }: { data: Record<string, unknown> }) {
-  const topLb = (data.topLeaderboard as Array<{ user: { name: string; role: string }; totalPoints: number; problemsSolved: number }>) ?? [];
+  const topLb = (data.topLeaderboard as Array<{
+    user?: { name?: string; role?: string };
+    student?: { name?: string; role?: string };
+    name?: string;
+    role?: string;
+    totalPoints: number;
+    problemsSolved: number;
+  }>) ?? [];
   return (
     <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
@@ -139,8 +146,8 @@ function PlatformView({ data }: { data: Record<string, unknown> }) {
                   <div className="flex items-center gap-3">
                     <span className={`flex size-7 items-center justify-center rounded-full text-xs font-bold ${i === 0 ? "bg-amber-500 text-white" : i === 1 ? "bg-zinc-400 text-white" : i === 2 ? "bg-amber-700 text-white" : "bg-muted text-muted-foreground"}`}>{i + 1}</span>
                     <div>
-                      <p className="text-sm font-medium">{entry.user.name}</p>
-                      <p className="text-xs text-muted-foreground capitalize">{entry.user.role.toLowerCase().replace("_", " ")}</p>
+                      <p className="text-sm font-medium">{entry.user?.name ?? entry.student?.name ?? entry.name ?? "Unknown user"}</p>
+                      <p className="text-xs text-muted-foreground capitalize">{(entry.user?.role ?? entry.student?.role ?? entry.role ?? "student").toLowerCase().replace("_", " ")}</p>
                     </div>
                   </div>
                   <div className="text-right">
