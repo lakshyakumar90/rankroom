@@ -336,6 +336,9 @@ router.get("/:id", async (req, res, next) => {
 router.patch("/:id", async (req, res, next) => {
   try {
     const assignment = await ensureAssignmentAccess(req.user!, req.params.id);
+    if (!canManageAssignments(req.user!.role)) {
+      throw new AppError("Students cannot update assignments", 403);
+    }
 
     const updated = await prisma.assignment.update({
       where: { id: assignment.id },
@@ -356,6 +359,9 @@ router.patch("/:id", async (req, res, next) => {
 router.delete("/:id", async (req, res, next) => {
   try {
     await ensureAssignmentAccess(req.user!, req.params.id);
+    if (!canManageAssignments(req.user!.role)) {
+      throw new AppError("Students cannot delete assignments", 403);
+    }
     await prisma.assignment.delete({ where: { id: req.params.id } });
     res.json({ success: true, message: "Assignment deleted" });
   } catch (error) {
@@ -448,6 +454,15 @@ router.patch("/:id/grade/:submissionId", validate(gradeSubmissionSchema), async 
     }
 
     const { score, feedback } = req.body as { score: number; feedback?: string };
+    const existingSubmission = await prisma.assignmentSubmission.findUnique({
+      where: { id: req.params.submissionId },
+      select: { id: true, assignmentId: true },
+    });
+
+    if (!existingSubmission || existingSubmission.assignmentId !== assignment.id) {
+      throw new AppError("Submission not found for this assignment", 404);
+    }
+
     const submission = await prisma.assignmentSubmission.update({
       where: { id: req.params.submissionId },
       data: {

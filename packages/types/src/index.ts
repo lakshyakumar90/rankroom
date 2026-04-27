@@ -713,6 +713,27 @@ export interface HackathonEligibility {
   currentCgpa?: number | null;
 }
 
+export type EventRegistrationState =
+  | { status: "NOT_REGISTERED"; canRegister: boolean; reason?: string | null }
+  | { status: "REGISTERED"; teamId?: string | null }
+  | { status: "PENDING"; teamId?: string | null }
+  | { status: "WITHDRAWN" }
+  | { status: "WAITLISTED" }
+  | { status: "REJECTED"; reason?: string | null };
+
+export type EventTeamState =
+  | { status: "NO_TEAM"; canCreate: boolean; canJoin: boolean }
+  | { status: "LEADER"; teamId: string; teamName: string; memberCount: number; isLocked: boolean }
+  | { status: "MEMBER"; teamId: string; teamName: string; isLocked: boolean }
+  | { status: "JOIN_REQUEST_PENDING"; teamId: string; requestId: string }
+  | { status: "INVITE_PENDING"; teamId: string; inviteId: string };
+
+export interface EventViewerState {
+  registrationState: EventRegistrationState;
+  teamState?: EventTeamState;
+  isStaff: boolean;
+}
+
 export interface HackathonTeamMember {
   id: string;
   studentId: string;
@@ -788,6 +809,9 @@ export interface Hackathon {
   winnerEntries?: HackathonWinnerEntry[];
   audience?: Array<{ studentId: string }>;
   eligibility?: HackathonEligibility;
+  viewerState?: EventViewerState & {
+    ownTeam?: HackathonTeam | null;
+  };
 }
 
 export interface ParticipationReadiness {

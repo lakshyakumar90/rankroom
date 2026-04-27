@@ -10,6 +10,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { type ApiResponse, type Problem } from "@repo/types";
 import { createContestSchema } from "@repo/validators";
 import { toast } from "sonner";
@@ -83,15 +92,35 @@ export default function CreateContestPage() {
       return;
     }
 
+    const isSectionScopedCreator = user?.role === "TEACHER" || user?.role === "CLASS_COORDINATOR";
+    if (isSectionScopedCreator && !sectionId) {
+      toast.error("Select a section for this contest");
+      return;
+    }
+
+    const departmentId = user?.scope.primaryDepartmentId ?? undefined;
+    const scope = sectionId
+      ? "SECTION"
+      : departmentId && user?.role === "DEPARTMENT_HEAD"
+        ? "DEPARTMENT"
+        : "GLOBAL";
+
+    if (scope === "DEPARTMENT" && !departmentId) {
+      toast.error("Your department scope is not available");
+      return;
+    }
+
     const parsed = createContestSchema.safeParse({
       title,
       description,
       startTime: new Date(startTime).toISOString(),
       endTime: new Date(endTime).toISOString(),
       type,
+      scope,
       rules: rules || undefined,
       problemIds: selectedProblems.map((p) => p.id),
-      sectionId: sectionId || undefined,
+      sectionId: scope === "SECTION" ? sectionId : undefined,
+      departmentId: scope === "DEPARTMENT" ? departmentId : undefined,
       participantIds,
     });
 
@@ -144,14 +173,13 @@ export default function CreateContestPage() {
 
             <div className="space-y-2">
               <Label htmlFor="description">Description *</Label>
-              <textarea
+              <Textarea
                 id="description"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={4}
                 required
                 placeholder="Describe the contest goals, scoring method, etc."
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-none"
               />
             </div>
 
@@ -180,7 +208,7 @@ export default function CreateContestPage() {
 
             <div className="space-y-2">
               <Label>Type</Label>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {(["PUBLIC", "PRIVATE", "INSTITUTIONAL"] as const).map((t) => (
                   <button
                     type="button"
@@ -201,19 +229,21 @@ export default function CreateContestPage() {
             {sectionOptions.length > 0 ? (
               <div className="space-y-2">
                 <Label htmlFor="sectionId">Section scope</Label>
-                <select
-                  id="sectionId"
-                  value={sectionId}
-                  onChange={(e) => setSectionId(e.target.value)}
-                  className="h-9 w-full border border-input bg-background px-3 text-sm"
-                >
-                  <option value="">Department / open scope</option>
-                  {sectionOptions.map((entry) => (
-                    <option key={entry.id} value={entry.id}>
-                      {entry.name}
-                    </option>
-                  ))}
-                </select>
+                <Select value={sectionId || "none"} onValueChange={(value) => setSectionId(value === "none" ? "" : value)}>
+                  <SelectTrigger id="sectionId" className="w-full">
+                    <SelectValue placeholder="Department / open scope" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="none">Department / open scope</SelectItem>
+                      {sectionOptions.map((entry) => (
+                        <SelectItem key={entry.id} value={entry.id}>
+                          {entry.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
               </div>
             ) : null}
 
@@ -243,13 +273,12 @@ export default function CreateContestPage() {
 
             <div className="space-y-2">
               <Label htmlFor="rules">Rules (optional)</Label>
-              <textarea
+              <Textarea
                 id="rules"
                 value={rules}
                 onChange={(e) => setRules(e.target.value)}
                 rows={3}
                 placeholder="Any special rules or constraints for this contest..."
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-none"
               />
             </div>
           </CardContent>

@@ -328,7 +328,7 @@ export default function HackathonDetailPage() {
 
                       <div className="mt-3 grid gap-2 sm:grid-cols-2">
                         <Button asChild variant="outline" size="sm" className="gap-2">
-                          <Link href="/profile/edit">
+                            <Link href="/settings">
                             <Zap className="size-3.5" />
                             Update Profile
                           </Link>

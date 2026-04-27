@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/ui/password-input";
 
 type LoginFormData = z.infer<typeof loginSchema>;
 
@@ -70,8 +71,7 @@ function LoginPageContent() {
         ? normalizeInternalPath(redirectedFrom)
         : getDefaultRouteForRole(result.data.role);
 
-      router.push(targetRoute);
-      router.refresh();
+      router.replace(targetRoute);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Login failed");
     } finally {
@@ -160,9 +160,8 @@ function LoginPageContent() {
                       Forgot password?
                     </Link>
                   </div>
-                  <Input
+                  <PasswordInput
                     id="password"
-                    type="password"
                     placeholder="••••••••"
                     autoComplete="current-password"
                     className="h-12 rounded-xl bg-background/50"

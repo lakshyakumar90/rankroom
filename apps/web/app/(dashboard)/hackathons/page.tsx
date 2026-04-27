@@ -9,25 +9,11 @@ import { PermissionGate } from "@/components/auth/PermissionGate";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import type { ApiResponse, HackathonEligibility } from "@repo/types";
+import type { ApiResponse, Hackathon } from "@repo/types";
 import { CalendarDays, Trophy, Users, Clock, CheckCircle2, ChevronRight, Check, AlertCircle, Zap } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
 
-interface HackathonListItem {
-  id: string;
-  title: string;
-  description: string;
-  departmentId?: string | null;
-  department?: { id: string; name: string; code: string } | null;
-  status: string;
-  registrationDeadline: string;
-  startDate: string;
-  endDate: string;
-  minTeamSize: number;
-  maxTeamSize: number;
-  prizeDetails?: string | null;
-  eligibility?: HackathonEligibility;
-}
+type HackathonListItem = Hackathon;
 
 const FILTERS = ["All", "Open", "Upcoming", "Ongoing", "Completed"] as const;
 
@@ -115,7 +101,7 @@ export default function HackathonsPage() {
                 {/* Image / Header Banner */}
                 <div className="relative h-28 bg-linear-to-r from-cyan-500/20 via-emerald-500/15 to-amber-500/20 p-5">
                   <div className="flex items-start justify-between">
-                    <Badge variant={hackathon.status === "LIVE" || hackathon.status === "ONGOING" ? "default" : "secondary"} className="bg-background/80 backdrop-blur-sm">
+                    <Badge variant={hackathon.status === "ONGOING" ? "default" : "secondary"} className="bg-background/80 backdrop-blur-sm">
                       {hackathon.department?.name ?? "Open to All"}
                     </Badge>
                     <Badge variant="outline" className={`bg-background/80 backdrop-blur-sm shadow-sm ${isOngoing ? "border-green-500/50 text-green-600" : ""}`}>
@@ -205,7 +191,7 @@ export default function HackathonsPage() {
                           </div>
 
                           <Button asChild variant="outline" size="sm" className="w-full gap-1.5 text-xs">
-                            <Link href="/profile/edit">
+                            <Link href="/settings">
                               <Zap className="size-3.5" />
                               Update Profile for Eligibility
                             </Link>

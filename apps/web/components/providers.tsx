@@ -94,8 +94,9 @@ function AuthInitializer() {
     }
 
     const currentSearch = searchParams.toString();
+    const redirectedFrom = searchParams.get("redirectedFrom");
 
-    if (user && isAuthRoute(pathname)) {
+    if (user && isAuthRoute(pathname) && !redirectedFrom) {
       router.replace(getDefaultRouteForRole(user.role));
       return;
     }

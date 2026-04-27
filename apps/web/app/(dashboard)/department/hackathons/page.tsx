@@ -9,22 +9,21 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { PermissionGate } from "@/components/auth/PermissionGate";
-import type { ApiResponse } from "@repo/types";
+import type { ApiResponse, Hackathon } from "@repo/types";
 import { CalendarDays, Trophy } from "lucide-react";
 import { toast } from "sonner";
 
-interface HackathonListItem {
-  id: string;
-  title: string;
-  description: string;
-  departmentId?: string | null;
-  status: string;
-  registrationDeadline: string;
-  startDate: string;
-  endDate: string;
-  prizeDetails?: string | null;
-}
+type HackathonListItem = Hackathon;
 
 interface ClassOption {
   id: string;
@@ -123,10 +122,10 @@ export default function DepartmentHackathonsPage() {
     <div className="flex flex-col gap-6 p-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Hackathons & Events</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Organize department, section, or selected-student events from one place.
-          </p>
+            <h1 className="text-2xl font-semibold tracking-tight">Offline Registration Events</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Organize department, section, or selected-student hackathons while team/project judging flows are offline.
+            </p>
         </div>
         <div className="flex items-center gap-3">
           <Link href="/hackathons" className="text-sm font-medium text-primary hover:underline">
@@ -148,8 +147,8 @@ export default function DepartmentHackathonsPage() {
           <CardContent className="grid gap-3 md:grid-cols-2">
             <Input placeholder="Event title" value={form.title} onChange={(e) => setForm((current) => ({ ...current, title: e.target.value }))} />
             <Input placeholder="Prize details" value={form.prizeDetails} onChange={(e) => setForm((current) => ({ ...current, prizeDetails: e.target.value }))} />
-            <textarea
-              className="min-h-28 border border-input bg-background px-3 py-2 text-sm md:col-span-2"
+            <Textarea
+              className="md:col-span-2"
               placeholder="Description"
               value={form.description}
               onChange={(e) => setForm((current) => ({ ...current, description: e.target.value }))}
@@ -162,12 +161,19 @@ export default function DepartmentHackathonsPage() {
             <Input type="number" min="0" value={form.minProjects} onChange={(e) => setForm((current) => ({ ...current, minProjects: Number(e.target.value || 0) }))} />
             <Input type="number" min="0" value={form.minLeetcode} onChange={(e) => setForm((current) => ({ ...current, minLeetcode: Number(e.target.value || 0) }))} />
             <Input placeholder="Min CGPA (optional)" value={form.minCgpa} onChange={(e) => setForm((current) => ({ ...current, minCgpa: e.target.value }))} />
-            <select className="h-9 border border-input bg-background px-3 text-sm" value={targetSectionId} onChange={(e) => setTargetSectionId(e.target.value)}>
-              <option value="">Whole department / open eligible students</option>
-              {(classesData?.data ?? []).map((section) => (
-                <option key={section.id} value={section.id}>{section.name}</option>
-              ))}
-            </select>
+            <Select value={targetSectionId || "none"} onValueChange={(value) => setTargetSectionId(value === "none" ? "" : value)}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Whole department / open eligible students" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="none">Whole department / open eligible students</SelectItem>
+                  {(classesData?.data ?? []).map((section) => (
+                    <SelectItem key={section.id} value={section.id}>{section.name}</SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
             {targetSectionId ? (
               <div className="space-y-2 md:col-span-2">
                 <p className="text-sm font-medium">Selected students (optional)</p>

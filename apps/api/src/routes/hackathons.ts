@@ -1,4 +1,4 @@
-import { Router, type Router as ExpressRouter } from "express";
+import { Router, type Request, type Router as ExpressRouter } from "express";
 import { prisma } from "@repo/database";
 import { authenticate, optionalAuth } from "../middleware/auth";
 import { requirePermission, requireScope } from "../middleware/permissions";
@@ -31,6 +31,15 @@ import {
 import { z } from "zod";
 
 const router: ExpressRouter = Router();
+
+async function getHackathonScopeResource(req: Request) {
+  const hackathon = await prisma.hackathon.findUnique({
+    where: { id: req.params.id },
+    select: { createdById: true, departmentId: true },
+  });
+
+  return { ownerId: hackathon?.createdById, departmentId: hackathon?.departmentId };
+}
 
 router.get("/", optionalAuth, listHackathonsController);
 // GET /:id — role-aware viewer payload
@@ -76,6 +85,7 @@ router.put(
   "/:id/winners",
   authenticate,
   requirePermission("hackathons:update"),
+  requireScope(getHackathonScopeResource),
   validate(upsertHackathonWinnersSchema),
   upsertHackathonWinnersController
 );
@@ -139,7 +149,12 @@ router.get("/:id/eligibility/:userId", optionalAuth, hackathonEligibilityControl
 
 // DSA Phase: problem management for hackathons
 // POST /api/hackathons/:id/problems
-router.post("/:id/problems", authenticate, requirePermission("hackathons:update"), async (req, res, next) => {
+router.post(
+  "/:id/problems",
+  authenticate,
+  requirePermission("hackathons:update"),
+  requireScope(getHackathonScopeResource),
+  async (req, res, next) => {
   try {
     const { problemId, points, order } = req.body as { problemId: string; points?: number; order?: number };
     if (!problemId) throw new AppError("problemId is required", 400);
@@ -169,10 +184,16 @@ router.post("/:id/problems", authenticate, requirePermission("hackathons:update"
   } catch (err) {
     next(err);
   }
-});
+  }
+);
 
 // DELETE /api/hackathons/:id/problems/:problemId
-router.delete("/:id/problems/:problemId", authenticate, requirePermission("hackathons:update"), async (req, res, next) => {
+router.delete(
+  "/:id/problems/:problemId",
+  authenticate,
+  requirePermission("hackathons:update"),
+  requireScope(getHackathonScopeResource),
+  async (req, res, next) => {
   try {
     await prisma.hackathonProblem.delete({
       where: { hackathonId_problemId: { hackathonId: req.params.id, problemId: req.params.problemId } },
@@ -181,7 +202,8 @@ router.delete("/:id/problems/:problemId", authenticate, requirePermission("hacka
   } catch (err) {
     next(err);
   }
-});
+  }
+);
 
 // GET /api/hackathons/:id/standings
 router.get("/:id/standings", optionalAuth, async (req, res, next) => {

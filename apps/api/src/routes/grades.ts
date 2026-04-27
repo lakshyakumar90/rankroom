@@ -55,6 +55,23 @@ async function ensureSubjectGradeAccess(
   return subject;
 }
 
+async function ensureStudentsInSection(studentIds: string[], sectionId: string) {
+  const uniqueStudentIds = [...new Set(studentIds)];
+  if (uniqueStudentIds.length === 0) return;
+
+  const enrollments = await prisma.enrollment.findMany({
+    where: {
+      sectionId,
+      studentId: { in: uniqueStudentIds },
+    },
+    select: { studentId: true },
+  });
+
+  if (enrollments.length !== uniqueStudentIds.length) {
+    throw new AppError("One or more students are outside the subject section", 400);
+  }
+}
+
 async function ensureGradeAccess(
   user: NonNullable<Express.Request["user"]>,
   gradeId: string
@@ -102,6 +119,7 @@ async function ensureGradeAccess(
 router.post("/", validate(createGradeSchema), async (req, res, next) => {
   try {
     const subject = await ensureSubjectGradeAccess(req.user!, req.body.subjectId);
+    await ensureStudentsInSection([req.body.studentId], subject.sectionId);
 
     const grade = await prisma.grade.create({
       data: {
@@ -161,6 +179,7 @@ router.post("/bulk", validate(bulkCreateGradesSchema), async (req, res, next) =>
     };
 
     const subject = await ensureSubjectGradeAccess(req.user!, subjectId);
+    await ensureStudentsInSection(grades.map((entry) => entry.studentId), subject.sectionId);
 
     const upserted = await prisma.$transaction(async (tx) => {
       const results = [];
@@ -335,6 +354,22 @@ router.get("/student/:studentId/cgpa", async (req, res, next) => {
   try {
     if (req.user!.role === Role.STUDENT && req.user!.id !== req.params.studentId) {
       throw new AppError("Forbidden", 403);
+    }
+
+    if (req.user!.role !== Role.STUDENT) {
+      const enrollment = await prisma.enrollment.findFirst({
+        where: { studentId: req.params.studentId },
+        select: { sectionId: true },
+      });
+
+      if (!enrollment) {
+        throw new AppError("Student enrollment not found", 404);
+      }
+
+      const allowed = await canAccessSection(req.user!, enrollment.sectionId);
+      if (!allowed) {
+        throw new AppError("Forbidden", 403);
+      }
     }
 
     const cgpaData = await calculateStudentCgpa(req.params.studentId);

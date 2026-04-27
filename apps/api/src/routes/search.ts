@@ -1,5 +1,5 @@
 import { Router, type Router as ExpressRouter } from "express";
-import { prisma } from "@repo/database";
+import { prisma, ProblemVisibility, type Prisma } from "@repo/database";
 import { Role } from "@repo/types";
 import { authenticate } from "../middleware/auth";
 
@@ -28,6 +28,16 @@ router.get("/", async (req, res, next) => {
     const isDepartmentHead = user.role === Role.DEPARTMENT_HEAD;
     const isSectionStaff = user.role === Role.CLASS_COORDINATOR || user.role === Role.TEACHER;
 
+    const problemScopeWhere: Prisma.ProblemWhereInput = hasStaffAccess(user.role)
+      ? {}
+      : {
+          OR: [
+            { visibility: ProblemVisibility.GLOBAL },
+            { departmentId: { in: departmentIds } },
+            { classId: { in: sectionIds } },
+          ],
+        };
+
     const [problems, contests, assignments, hackathons, subjects, sections, departments, users] = await Promise.all([
       prisma.problem.findMany({
         where: {
@@ -39,19 +49,7 @@ router.get("/", async (req, res, next) => {
                 { tags: { has: query } },
               ],
             },
-            ...(hasStaffAccess(user.role)
-              ? []
-              : !user
-              ? [{ visibility: "GLOBAL" as const }]
-              : [
-                  {
-                    OR: [
-                      { visibility: "GLOBAL" },
-                      { departmentId: { in: departmentIds } },
-                      { classId: { in: sectionIds } },
-                    ],
-                  },
-                ]),
+            ...(Object.keys(problemScopeWhere).length ? [problemScopeWhere] : []),
           ],
         },
         select: { id: true, title: true, difficulty: true, tags: true },

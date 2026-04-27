@@ -18,6 +18,12 @@ coverage
 # Turbo
 .turbo
 
+# Graphify generated artifacts
+.graphify_python
+.graphify_run_summary.json
+**/.graphify_run_summary.json
+**/graphify-out/
+
 # Vercel
 .vercel
 

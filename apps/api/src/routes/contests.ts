@@ -1,7 +1,7 @@
-import { Router, type Router as ExpressRouter } from "express";
+import { Router, type Request, type Router as ExpressRouter } from "express";
 import { prisma } from "@repo/database";
 import { authenticate, canAccessSection, optionalAuth } from "../middleware/auth";
-import { requirePermission } from "../middleware/permissions";
+import { requirePermission, requireScope } from "../middleware/permissions";
 import { validate } from "../middleware/validate";
 import { AppError } from "../middleware/error";
 import { createContestSchema, paginationSchema } from "@repo/validators";
@@ -37,10 +37,30 @@ function buildContestVisibilityWhere(user: Express.Request["user"]) {
 
   return {
     OR: [
-      { sectionId: null, audience: { none: {} } },
+      { sectionId: null, departmentId: null, audience: { none: {} } },
       { sectionId: { in: user.scope.sectionIds }, audience: { none: {} } },
+      { departmentId: { in: user.scope.departmentIds }, audience: { none: {} } },
       { audience: { some: { studentId: user.id } } },
     ],
+  };
+}
+
+async function getContestScopeResource(req: Request) {
+  const contest = await prisma.contest.findUnique({
+    where: { id: req.params.id },
+    select: {
+      createdById: true,
+      sectionId: true,
+      departmentId: true,
+      subjectId: true,
+    },
+  });
+
+  return {
+    ownerId: contest?.createdById,
+    sectionId: contest?.sectionId,
+    departmentId: contest?.departmentId,
+    subjectId: contest?.subjectId,
   };
 }
 
@@ -225,14 +245,20 @@ router.post("/", authenticate, requirePermission("contests:create"), validate(cr
 });
 
 // PATCH /api/contests/:id
-router.patch("/:id", authenticate, requirePermission("contests:create"), async (req, res, next) => {
+router.patch(
+  "/:id",
+  authenticate,
+  requirePermission("contests:create"),
+  requireScope(getContestScopeResource),
+  async (req, res, next) => {
   try {
     const contest = await prisma.contest.update({ where: { id: req.params.id }, data: req.body });
     res.json({ success: true, data: contest });
   } catch (err) {
     next(err);
   }
-});
+  }
+);
 
 // POST /api/contests/:id/register — uses canonical service with registrationEnd enforcement
 router.post("/:id/register", authenticate, async (req, res, next) => {
@@ -271,7 +297,12 @@ router.post("/:id/tab-switch", authenticate, async (req, res, next) => {
 });
 
 // GET /api/contests/:id/plagiarism - post-contest plagiarism detection (P3.5)
-router.get("/:id/plagiarism", authenticate, requirePermission("contests:create"), async (req, res, next) => {
+router.get(
+  "/:id/plagiarism",
+  authenticate,
+  requirePermission("contests:create"),
+  requireScope(getContestScopeResource),
+  async (req, res, next) => {
   try {
     const { threshold } = req.query as { threshold?: string };
     const parsedThreshold = threshold ? parseFloat(threshold) : 0.75;
@@ -281,10 +312,16 @@ router.get("/:id/plagiarism", authenticate, requirePermission("contests:create")
   } catch (err) {
     next(err);
   }
-});
+  }
+);
 
 // POST /api/contests/:id/publish-results - publish results and generate certificates
-router.post("/:id/publish-results", authenticate, requirePermission("contests:create"), async (req, res, next) => {
+router.post(
+  "/:id/publish-results",
+  authenticate,
+  requirePermission("contests:create"),
+  requireScope(getContestScopeResource),
+  async (req, res, next) => {
   try {
     const contest = await prisma.contest.findUnique({ where: { id: req.params.id } });
     if (!contest) throw new AppError("Contest not found", 404);
@@ -309,7 +346,8 @@ router.post("/:id/publish-results", authenticate, requirePermission("contests:cr
   } catch (err) {
     next(err);
   }
-});
+  }
+);
 
 // GET /api/contests/:id/problems
 router.get("/:id/problems", optionalAuth, async (req, res, next) => {

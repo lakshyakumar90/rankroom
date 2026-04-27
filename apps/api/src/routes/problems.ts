@@ -24,7 +24,6 @@ import {
   MAX_STDIN_BYTES,
   MAX_TEST_CASES_PER_RUN,
   MAX_TEST_CASES_PER_SUBMIT,
-  TS_EXECUTION_MODE,
 } from "../config/execution";
 
 const router: ExpressRouter = Router();
@@ -49,6 +48,7 @@ const submitSchema = z.object({
 });
 
 const ALLOWED_PROBLEM_LANGUAGES = ["python", "cpp", "c"] as const;
+const SUPPORTED_PROBLEM_LANGUAGES = [...ALLOWED_PROBLEM_LANGUAGES];
 
 function isAllowedProblemLanguage(language: string): language is (typeof ALLOWED_PROBLEM_LANGUAGES)[number] {
   return ALLOWED_PROBLEM_LANGUAGES.includes(language as (typeof ALLOWED_PROBLEM_LANGUAGES)[number]);
@@ -275,7 +275,7 @@ router.post("/:id/run", authenticate, validate(runSchema), async (req, res, next
           data: {
             results: summary.results,
             execution: {
-              typeScriptMode: language === "typescript" ? TS_EXECUTION_MODE : undefined,
+              supportedLanguages: SUPPORTED_PROBLEM_LANGUAGES,
             },
           },
         });
@@ -290,7 +290,7 @@ router.post("/:id/run", authenticate, validate(runSchema), async (req, res, next
         data: {
           results: [toTestResult(result, 0, null)],
           execution: {
-            typeScriptMode: language === "typescript" ? TS_EXECUTION_MODE : undefined,
+            supportedLanguages: SUPPORTED_PROBLEM_LANGUAGES,
           },
         },
       });
@@ -337,7 +337,7 @@ router.post("/:id/run", authenticate, validate(runSchema), async (req, res, next
             passed: result.passed,
           })),
           execution: {
-            typeScriptMode: language === "typescript" ? TS_EXECUTION_MODE : undefined,
+            supportedLanguages: SUPPORTED_PROBLEM_LANGUAGES,
           },
         },
       });
@@ -354,7 +354,7 @@ router.post("/:id/run", authenticate, validate(runSchema), async (req, res, next
         data: {
           results: [toTestResult(result, 0, null)],
           execution: {
-            typeScriptMode: language === "typescript" ? TS_EXECUTION_MODE : undefined,
+            supportedLanguages: SUPPORTED_PROBLEM_LANGUAGES,
           },
         },
       });
@@ -377,7 +377,7 @@ router.post("/:id/run", authenticate, validate(runSchema), async (req, res, next
           toTestResult(result, index, sampleCases[index]?.expectedOutput ?? null)
         ),
         execution: {
-          typeScriptMode: language === "typescript" ? TS_EXECUTION_MODE : undefined,
+          supportedLanguages: SUPPORTED_PROBLEM_LANGUAGES,
         },
       },
     });

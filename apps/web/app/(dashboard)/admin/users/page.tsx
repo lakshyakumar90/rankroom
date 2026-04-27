@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Role, type ApiResponse } from "@repo/types";
 import { Pencil, Plus, Search, Trash2 } from "lucide-react";
@@ -169,10 +170,10 @@ export default function AdminUsersPage() {
                 value={createForm.email}
                 onChange={(event) => setCreateForm((current) => ({ ...current, email: event.target.value }))}
               />
-              <Input
+              <PasswordInput
                 placeholder="Temporary password"
-                type="password"
                 value={createForm.password}
+                autoComplete="new-password"
                 onChange={(event) => setCreateForm((current) => ({ ...current, password: event.target.value }))}
               />
               <select

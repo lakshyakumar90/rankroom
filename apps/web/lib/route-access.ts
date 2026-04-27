@@ -16,9 +16,15 @@ const ROUTE_RULES: RouteRule[] = [
     roles: [Role.ADMIN, Role.SUPER_ADMIN],
   },
   {
-    prefix: "/department",
+    prefix: "/department/hackathons",
     type: "protected",
-    roles: [Role.DEPARTMENT_HEAD],
+    roles: [
+      Role.ADMIN,
+      Role.SUPER_ADMIN,
+      Role.DEPARTMENT_HEAD,
+      Role.CLASS_COORDINATOR,
+      Role.TEACHER,
+    ],
   },
   {
     prefix: "/attendance/mark",
@@ -34,6 +40,11 @@ const ROUTE_RULES: RouteRule[] = [
     prefix: "/contests/create",
     type: "protected",
     roles: [Role.DEPARTMENT_HEAD, Role.CLASS_COORDINATOR, Role.TEACHER],
+  },
+  {
+    prefix: "/department",
+    type: "protected",
+    roles: [Role.DEPARTMENT_HEAD],
   },
   { prefix: "/dashboard", type: "protected" },
   { prefix: "/attendance", type: "protected" },

@@ -1,4 +1,4 @@
-import { prisma } from "@repo/database";
+import { prisma, type Prisma } from "@repo/database";
 import { Role, type JWTPayload } from "@repo/types";
 import { AppError } from "../middleware/error";
 
@@ -40,7 +40,7 @@ export async function assignCoordinator(
   });
 }
 
-export async function removeCoordinator(sectionId: string, userId: string) {
+export async function removeCoordinator(sectionId: string, userId: string): Promise<Prisma.BatchPayload> {
   return prisma.sectionCoordinatorAssignment.updateMany({
     where: { sectionId, userId },
     data: { isActive: false },
@@ -79,7 +79,7 @@ export async function removeTeacherFromSubject(
   sectionId: string,
   subjectId: string,
   teacherId: string
-) {
+): Promise<Prisma.BatchPayload> {
   return prisma.teacherSubjectAssignment.deleteMany({
     where: { sectionId, subjectId, teacherId },
   });

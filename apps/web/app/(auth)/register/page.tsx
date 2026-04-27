@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/ui/password-input";
 
 type RegisterFormData = z.infer<typeof registerSchema>;
 
@@ -69,8 +70,7 @@ export default function RegisterPage() {
 
       setUser(result.data);
       toast.success("Account created");
-      router.push(getDefaultRouteForRole(result.data.role));
-      router.refresh();
+      router.replace(getDefaultRouteForRole(result.data.role));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Registration failed");
     } finally {
@@ -132,7 +132,7 @@ export default function RegisterPage() {
               </Field>
 
               <Field label="Password" htmlFor="password" error={errors.password?.message}>
-                <Input id="password" type="password" placeholder="Minimum 8 characters" className="h-11 rounded-xl" {...register("password")} />
+                <PasswordInput id="password" placeholder="Minimum 8 characters" className="h-11 rounded-xl" autoComplete="new-password" {...register("password")} />
               </Field>
 
               <Button type="submit" size="lg" className="mt-2 w-full rounded-xl" disabled={loading}>
