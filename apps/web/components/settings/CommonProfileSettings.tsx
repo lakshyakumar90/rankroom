@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
 import { toast } from "sonner";
@@ -16,6 +16,7 @@ import { Camera, Trash2, User as UserIcon } from "lucide-react";
 
 export function CommonProfileSettings() {
   const { user, setUser } = useAuthStore();
+  const queryClient = useQueryClient();
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const avatarPreview = useMemo(() => {
     if (avatarFile) {
@@ -48,6 +49,11 @@ export function CommonProfileSettings() {
     mutationFn: () => api.patch<ApiResponse<unknown>>("/api/profile/update", form),
     onSuccess: () => {
       toast.success("Profile updated");
+      void queryClient.invalidateQueries({ queryKey: ["public-profile"] });
+      void queryClient.invalidateQueries({ queryKey: ["profile-heatmap"] });
+      if (user?.profile?.handle) {
+        void queryClient.invalidateQueries({ queryKey: ["public-profile", user.profile.handle] });
+      }
       if (user) {
         setUser({
           ...user,

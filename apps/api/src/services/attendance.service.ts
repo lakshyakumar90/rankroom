@@ -1,7 +1,7 @@
 import { prisma } from "@repo/database";
 import { AppError } from "../middleware/error";
 import { emitNotificationToUser } from "../lib/socket";
-import { NotificationType } from "@repo/types";
+import { NotificationType, Role, type JWTPayload } from "@repo/types";
 
 const ATTENDANCE_WARNING_THRESHOLD = 75;
 
@@ -348,4 +348,148 @@ export async function getLowAttendance(sectionId: string) {
   );
 
   return results.flat();
+}
+
+export async function getScopedAttendanceOverview(user: JWTPayload) {
+  const subjectWhere =
+    user.role === Role.STUDENT
+      ? {
+          isArchived: false,
+          section: {
+            enrollments: {
+              some: { studentId: user.id },
+            },
+          },
+        }
+      : user.role === Role.TEACHER
+        ? {
+            isArchived: false,
+            id: { in: user.scope.teachingAssignments.map((assignment) => assignment.subjectId) },
+          }
+        : user.role === Role.CLASS_COORDINATOR
+          ? {
+              isArchived: false,
+              sectionId: { in: user.scope.sectionIds },
+            }
+          : user.role === Role.DEPARTMENT_HEAD
+            ? {
+                isArchived: false,
+                departmentId: { in: user.scope.departmentIds },
+              }
+            : { isArchived: false };
+
+  const subjects = await prisma.subject.findMany({
+    where: subjectWhere,
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      minimumAttendancePct: true,
+      lateAttendanceWeight: true,
+      section: {
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          department: { select: { id: true, name: true, code: true } },
+          _count: { select: { enrollments: true } },
+        },
+      },
+      attendanceSessions: {
+        orderBy: { date: "desc" },
+        select: {
+          id: true,
+          date: true,
+          topic: true,
+          takenBy: { select: { id: true, name: true } },
+          records: {
+            where: user.role === Role.STUDENT ? { studentId: user.id } : undefined,
+            select: {
+              status: true,
+              studentId: true,
+              student: { select: { id: true, name: true, email: true, avatar: true } },
+            },
+          },
+        },
+      },
+    },
+    orderBy: [{ section: { name: "asc" } }, { name: "asc" }],
+  });
+
+  const mappedSubjects = subjects.map((subject) => {
+    const totals = {
+      present: 0,
+      absent: 0,
+      late: 0,
+      total: 0,
+      weightedPresent: 0,
+      percentage: 0,
+      sessions: subject.attendanceSessions.length,
+      enrolledStudents: subject.section._count.enrollments,
+    };
+
+    const recentSessions = subject.attendanceSessions.slice(0, 10).map((session) => {
+      const sessionTotals = { present: 0, absent: 0, late: 0, total: 0 };
+
+      for (const record of session.records) {
+        sessionTotals.total += 1;
+        if (record.status === "PRESENT") sessionTotals.present += 1;
+        else if (record.status === "ABSENT") sessionTotals.absent += 1;
+        else sessionTotals.late += 1;
+      }
+
+      return {
+        id: session.id,
+        date: session.date.toISOString(),
+        topic: session.topic,
+        takenBy: session.takenBy,
+        ...sessionTotals,
+      };
+    });
+
+    for (const session of subject.attendanceSessions) {
+      for (const record of session.records) {
+        totals.total += 1;
+        totals.weightedPresent += attendanceCredit(record.status, subject.lateAttendanceWeight ?? 0.5);
+        if (record.status === "PRESENT") totals.present += 1;
+        else if (record.status === "ABSENT") totals.absent += 1;
+        else totals.late += 1;
+      }
+    }
+
+    totals.percentage = totals.total === 0 ? 0 : Math.round((totals.weightedPresent / totals.total) * 100);
+
+    return {
+      subject: {
+        id: subject.id,
+        name: subject.name,
+        code: subject.code,
+        minimumAttendancePct: subject.minimumAttendancePct,
+      },
+      section: subject.section,
+      totals,
+      recentSessions,
+    };
+  });
+
+  const totals = mappedSubjects.reduce(
+    (acc, subject) => {
+      acc.present += subject.totals.present;
+      acc.absent += subject.totals.absent;
+      acc.late += subject.totals.late;
+      acc.total += subject.totals.total;
+      acc.sessions += subject.totals.sessions;
+      acc.weightedPresent += subject.totals.weightedPresent;
+      return acc;
+    },
+    { present: 0, absent: 0, late: 0, total: 0, sessions: 0, weightedPresent: 0, percentage: 0 }
+  );
+
+  totals.percentage = totals.total === 0 ? 0 : Math.round((totals.weightedPresent / totals.total) * 100);
+
+  return {
+    role: user.role,
+    totals,
+    subjects: mappedSubjects,
+  };
 }

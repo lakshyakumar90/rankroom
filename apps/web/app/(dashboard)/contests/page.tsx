@@ -32,6 +32,18 @@ type ContestWithMeta = Contest & {
   createdBy?: { id: string; name: string };
 };
 
+function getContestDisplayStatus(contest: Pick<ContestWithMeta, "status" | "startTime" | "endTime">) {
+  const now = Date.now();
+  const startTime = new Date(contest.startTime).getTime();
+  const endTime = new Date(contest.endTime).getTime();
+
+  if (Number.isFinite(endTime) && endTime <= now) return "ENDED";
+  if (Number.isFinite(startTime) && startTime <= now && endTime > now) return "LIVE";
+  if (contest.status === "ENDED" || contest.status === "RESULTS_PUBLISHED") return "ENDED";
+  if (["UPCOMING", "SCHEDULED", "REGISTRATION_OPEN"].includes(contest.status)) return "UPCOMING";
+  return contest.status;
+}
+
 // ─── Countdown hook ────────────────────────────────────────────────────────────
 function useCountdown(target: Date | null) {
   const [diff, setDiff] = useState<number>(() => target ? target.getTime() - Date.now() : 0);
@@ -56,9 +68,10 @@ function useCountdown(target: Date | null) {
 }
 
 function CountdownBadge({ contest }: { contest: ContestWithMeta }) {
-  const target = contest.status === "UPCOMING"
+  const displayStatus = getContestDisplayStatus(contest);
+  const target = displayStatus === "UPCOMING"
     ? new Date(contest.startTime)
-    : contest.status === "LIVE"
+    : displayStatus === "LIVE"
       ? new Date(contest.endTime)
       : null;
 
@@ -68,7 +81,7 @@ function CountdownBadge({ contest }: { contest: ContestWithMeta }) {
   return (
     <span className="flex items-center gap-1 text-xs font-mono">
       <Clock className="size-3" />
-      {contest.status === "UPCOMING" ? "Starts in" : "Ends in"} {countdown}
+      {displayStatus === "UPCOMING" ? "Starts in" : "Ends in"} {countdown}
     </span>
   );
 }
@@ -181,17 +194,18 @@ function ContestCard({ contest, onRegister }: {
 }) {
   const { user } = useAuthStore();
   const canParticipate = hasPermission(user?.role, "contests:participate");
-  const isLiveOrUpcoming = contest.status === "LIVE" || contest.status === "UPCOMING";
-  const isEnded = contest.status === "ENDED";
+  const displayStatus = getContestDisplayStatus(contest);
+  const isLiveOrUpcoming = displayStatus === "LIVE" || displayStatus === "UPCOMING";
+  const isEnded = displayStatus === "ENDED";
 
   return (
-    <Card className={`group transition-all hover:shadow-md hover:border-primary/30 h-full flex flex-col ${contest.status === "LIVE" ? "border-green-500/30 ring-1 ring-green-500/20" : ""}`}>
+    <Card className={`group transition-all hover:shadow-md hover:border-primary/30 h-full flex flex-col ${displayStatus === "LIVE" ? "border-green-500/30 ring-1 ring-green-500/20" : ""}`}>
       <CardContent className="p-4 flex flex-col h-full gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <StatusBadge status={contest.status} />
+          <StatusBadge status={displayStatus} />
           <Badge variant="outline" className="text-[10px]">{contest.type}</Badge>
         </div>
-        <h3 className="text-sm font-semibold leading-snug break-words">{contest.title}</h3>
+        <h3 className="text-sm font-semibold leading-snug wrap-break-word">{contest.title}</h3>
         <p className="text-xs text-muted-foreground line-clamp-2 mb-auto flex-1">
           {contest.description.replace(/[#*`]/g, "").trim().slice(0, 160)}
         </p>
@@ -270,9 +284,9 @@ export default function ContestsPage() {
     { label: "Ended", value: "ENDED" },
   ];
 
-  const liveContests = contests.filter((c) => c.status === "LIVE");
-  const upcomingContests = contests.filter((c) => c.status === "UPCOMING");
-  const endedContests = contests.filter((c) => c.status === "ENDED");
+  const liveContests = contests.filter((c) => getContestDisplayStatus(c) === "LIVE");
+  const upcomingContests = contests.filter((c) => getContestDisplayStatus(c) === "UPCOMING");
+  const endedContests = contests.filter((c) => getContestDisplayStatus(c) === "ENDED");
 
   return (
     <div className="space-y-6">

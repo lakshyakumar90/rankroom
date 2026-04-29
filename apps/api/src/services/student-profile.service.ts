@@ -1,6 +1,7 @@
 import { prisma } from "@repo/database";
 import { Role, type JWTPayload } from "@repo/types";
 import { AppError } from "../middleware/error";
+import { normalizeGitHubUsername, normalizeLeetCodeUsername } from "../lib/platform-usernames";
 import { supabase } from "../lib/supabase";
 import { syncStudentProfileCgpa } from "./cgpa.service";
 import { computeStreakFromHeatmap } from "./streak.service";
@@ -96,8 +97,18 @@ export async function getStudentProfile(viewer: JWTPayload | undefined, userId: 
     throw new AppError("Profile not found", 404);
   }
 
+  const effectiveGithub =
+    studentProfile.githubUsername?.trim() || user.githubUsername?.trim() || null;
+
   if (allowedPrivate) {
-    return { ...user, studentProfile, certificates: user.certificatesEarned };
+    return {
+      ...user,
+      studentProfile: {
+        ...studentProfile,
+        githubUsername: effectiveGithub,
+      },
+      certificates: user.certificatesEarned,
+    };
   }
 
   return {
@@ -105,7 +116,7 @@ export async function getStudentProfile(viewer: JWTPayload | undefined, userId: 
     name: user.name,
     role: user.role,
     avatar: user.avatar,
-    githubUsername: user.githubUsername,
+    githubUsername: effectiveGithub,
     createdAt: user.createdAt,
     profile: {
       handle: user.profile?.handle ?? null,
@@ -115,6 +126,7 @@ export async function getStudentProfile(viewer: JWTPayload | undefined, userId: 
     certificates: user.certificatesEarned,
     studentProfile: {
       ...studentProfile,
+      githubUsername: effectiveGithub,
       resumeUrl: isPublic ? studentProfile.resumeUrl : null,
       resumeFilename: isPublic ? studentProfile.resumeFilename : null,
       projects: studentProfile.projects,
@@ -129,7 +141,21 @@ export async function getStudentProfile(viewer: JWTPayload | undefined, userId: 
 
 export async function updateOwnStudentProfile(user: JWTPayload, data: Record<string, unknown>) {
   const profile = await ensureStudentProfile(user.id);
-  const nextGithub = typeof data.githubUsername === "string" ? data.githubUsername : undefined;
+
+  const nextGithub =
+    data.githubUsername !== undefined
+      ? typeof data.githubUsername === "string"
+        ? normalizeGitHubUsername(data.githubUsername) || null
+        : null
+      : undefined;
+
+  const nextLeetcode =
+    data.leetcodeUsername !== undefined
+      ? typeof data.leetcodeUsername === "string"
+        ? normalizeLeetCodeUsername(data.leetcodeUsername) || null
+        : null
+      : undefined;
+
   const cgpaUpdate =
     user.role === Role.STUDENT
       ? { cgpa: await syncStudentProfileCgpa(user.id) }
@@ -140,7 +166,7 @@ export async function updateOwnStudentProfile(user: JWTPayload, data: Record<str
   if (nextGithub !== undefined) {
     await prisma.user.update({
       where: { id: user.id },
-      data: { githubUsername: nextGithub || null },
+      data: { githubUsername: nextGithub },
     });
   }
 
@@ -148,8 +174,8 @@ export async function updateOwnStudentProfile(user: JWTPayload, data: Record<str
     where: { id: profile.id },
     data: {
       ...(data.bio !== undefined ? { bio: data.bio as string | null } : {}),
-      ...(data.leetcodeUsername !== undefined ? { leetcodeUsername: data.leetcodeUsername as string | null } : {}),
-      ...(data.githubUsername !== undefined ? { githubUsername: data.githubUsername as string | null } : {}),
+      ...(nextLeetcode !== undefined ? { leetcodeUsername: nextLeetcode } : {}),
+      ...(nextGithub !== undefined ? { githubUsername: nextGithub } : {}),
       ...(data.codechefUsername !== undefined ? { codechefUsername: data.codechefUsername as string | null } : {}),
       ...(data.codeforcesUsername !== undefined ? { codeforcesUsername: data.codeforcesUsername as string | null } : {}),
       ...(data.hackerrankUsername !== undefined ? { hackerrankUsername: data.hackerrankUsername as string | null } : {}),
@@ -179,7 +205,9 @@ export async function updateBasicProfile(userId: string, data: {
           where: { id: userId },
           data: {
             ...(data.name !== undefined ? { name: data.name } : {}),
-            ...(data.githubUsername !== undefined ? { githubUsername: data.githubUsername } : {}),
+            ...(data.githubUsername !== undefined
+              ? { githubUsername: normalizeGitHubUsername(data.githubUsername) || null }
+              : {}),
             ...(data.avatar !== undefined ? { avatar: data.avatar || null } : {}),
           },
         })
@@ -207,6 +235,14 @@ export async function updateBasicProfile(userId: string, data: {
         })
       : null,
   ]);
+
+  if (data.githubUsername !== undefined) {
+    const sp = await ensureStudentProfile(userId);
+    await prisma.studentProfile.update({
+      where: { id: sp.id },
+      data: { githubUsername: normalizeGitHubUsername(data.githubUsername) || null },
+    });
+  }
 
   return prisma.user.findUnique({
     where: { id: userId },
@@ -477,26 +513,39 @@ export async function assertStudentParticipationReadiness(userId: string) {
   };
 }
 
+function mergeHeatmapRecords(
+  ...maps: Array<Record<string, number>>
+): Record<string, number> {
+  const merged: Record<string, number> = {};
+  for (const map of maps) {
+    for (const [date, count] of Object.entries(map)) {
+      merged[date] = (merged[date] ?? 0) + Math.max(0, count ?? 0);
+    }
+  }
+  return merged;
+}
+
 export async function getHeatmap(userId: string, year?: number) {
   const profile = await ensureStudentProfile(userId);
-  let heatmap = (profile.activityHeatmap as Record<string, number>) ?? {};
+  const storedHeatmap = (profile.activityHeatmap as Record<string, number>) ?? {};
 
-  // If activityHeatmap is empty (not synced yet), fall back to building from submissions
-  if (Object.keys(heatmap).length === 0) {
-    const yearStart = year ? new Date(`${year}-01-01T00:00:00.000Z`) : new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
-    const submissions = await prisma.submission.findMany({
-      where: { userId, createdAt: { gte: yearStart } },
-      select: { createdAt: true },
-      orderBy: { createdAt: "asc" },
-    });
+  const yearStart = year
+    ? new Date(`${year}-01-01T00:00:00.000Z`)
+    : new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
 
-    const fallback: Record<string, number> = {};
-    for (const sub of submissions) {
-      const day = sub.createdAt.toISOString().split("T")[0]!;
-      fallback[day] = (fallback[day] ?? 0) + 1;
-    }
-    heatmap = fallback;
+  const submissions = await prisma.submission.findMany({
+    where: { userId, createdAt: { gte: yearStart } },
+    select: { createdAt: true },
+    orderBy: { createdAt: "asc" },
+  });
+
+  const submissionHeatmap: Record<string, number> = {};
+  for (const sub of submissions) {
+    const day = sub.createdAt.toISOString().split("T")[0]!;
+    submissionHeatmap[day] = (submissionHeatmap[day] ?? 0) + 1;
   }
+
+  const heatmap = mergeHeatmapRecords(storedHeatmap, submissionHeatmap);
 
   if (!year) {
     return heatmap;

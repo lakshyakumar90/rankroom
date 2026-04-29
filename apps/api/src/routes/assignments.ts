@@ -264,7 +264,7 @@ router.get("/mine", async (req, res, next) => {
   }
 });
 
-router.post("/", validate(createAssignmentSchema), async (req, res, next) => {
+router.post("/", upload.single("file"), validate(createAssignmentSchema), async (req, res, next) => {
   try {
     if (!canManageAssignments(req.user!.role)) {
       throw new AppError("Insufficient permissions", 403);
@@ -272,6 +272,7 @@ router.post("/", validate(createAssignmentSchema), async (req, res, next) => {
 
     const subject = await ensureSubjectAssignmentAccess(req.user!, req.body.subjectId);
     const targetStudentIds = Array.isArray(req.body.targetStudentIds) ? req.body.targetStudentIds as string[] : [];
+    let attachmentUrl: string | undefined;
 
     if (targetStudentIds.length > 0) {
       const eligibleStudents = await prisma.enrollment.findMany({
@@ -287,6 +288,20 @@ router.post("/", validate(createAssignmentSchema), async (req, res, next) => {
       }
     }
 
+    if (req.file) {
+      const fileName = `assignments/${subject.id}/${req.user!.id}/${Date.now()}_${req.file.originalname}`;
+      const { error } = await supabase.storage
+        .from("submissions")
+        .upload(fileName, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+
+      if (error) {
+        throw new AppError("Assignment file upload failed", 500);
+      }
+
+      const { data: urlData } = supabase.storage.from("submissions").getPublicUrl(fileName);
+      attachmentUrl = urlData.publicUrl;
+    }
+
     const assignment = await prisma.assignment.create({
       data: {
         title: req.body.title,
@@ -295,6 +310,7 @@ router.post("/", validate(createAssignmentSchema), async (req, res, next) => {
         teacherId: req.user!.id,
         dueDate: new Date(req.body.dueDate),
         maxScore: req.body.maxScore,
+        attachmentUrl,
         type: req.body.type ?? "FILE_UPLOAD",
         allowLate: req.body.allowLate ?? false,
         latePenaltyPct: req.body.latePenaltyPct ?? 20,

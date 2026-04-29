@@ -23,6 +23,16 @@ export async function syncContestStatuses(): Promise<void> {
       data: { status: "REGISTRATION_OPEN" },
     }),
 
+    // Any unpublished active contest that is already past its end time should close,
+    // even if the scheduler missed its live window.
+    prisma.contest.updateMany({
+      where: {
+        status: { in: ["UPCOMING", "REGISTRATION_OPEN", "SCHEDULED", "LIVE", "FROZEN"] },
+        endTime: { lte: now },
+      },
+      data: { status: "ENDED" },
+    }),
+
     // UPCOMING / REGISTRATION_OPEN -> LIVE at startTime
     prisma.contest.updateMany({
       where: {
@@ -43,11 +53,6 @@ export async function syncContestStatuses(): Promise<void> {
       data: { status: "FROZEN" },
     }),
 
-    // LIVE / FROZEN -> ENDED at endTime
-    prisma.contest.updateMany({
-      where: { status: { in: ["LIVE", "FROZEN"] }, endTime: { lte: now } },
-      data: { status: "ENDED" },
-    }),
   ]);
 }
 

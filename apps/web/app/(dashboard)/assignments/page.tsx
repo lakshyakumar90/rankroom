@@ -61,6 +61,7 @@ function CreateAssignmentDialog({ onCreated }: { onCreated?: () => void }) {
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [maxScore, setMaxScore] = useState("100");
+  const [assignmentFile, setAssignmentFile] = useState<File | null>(null);
   const [targetStudentIds, setTargetStudentIds] = useState<string[]>([]);
 
   const subjects = useMemo(
@@ -89,21 +90,26 @@ function CreateAssignmentDialog({ onCreated }: { onCreated?: () => void }) {
   });
 
   const createMutation = useMutation({
-    mutationFn: () =>
-      api.post("/api/assignments", {
-        title,
-        description,
-        subjectId: selectedSubjectId,
-        dueDate: new Date(dueDate).toISOString(),
-        maxScore: Number(maxScore),
-        targetStudentIds,
-      }),
+    mutationFn: () => {
+      const formData = new FormData();
+      formData.append("title", title);
+      formData.append("description", description);
+      formData.append("subjectId", selectedSubjectId);
+      formData.append("dueDate", new Date(dueDate).toISOString());
+      formData.append("maxScore", maxScore);
+      targetStudentIds.forEach((studentId) => formData.append("targetStudentIds", studentId));
+      if (assignmentFile) {
+        formData.append("file", assignmentFile);
+      }
+      return api.post("/api/assignments", formData);
+    },
     onSuccess: () => {
       toast.success("Assignment created");
       setTitle("");
       setDescription("");
       setDueDate("");
       setMaxScore("100");
+      setAssignmentFile(null);
       setTargetStudentIds([]);
       setSelectedSubjectId("");
       setOpen(false);
@@ -153,6 +159,22 @@ function CreateAssignmentDialog({ onCreated }: { onCreated?: () => void }) {
           <div className="space-y-1">
             <label className="text-xs font-medium text-muted-foreground">Max Score</label>
             <Input type="number" min="1" value={maxScore} onChange={(e) => setMaxScore(e.target.value)} />
+          </div>
+          <div className="space-y-1 md:col-span-2">
+            <label className="text-xs font-medium text-muted-foreground">Assignment file (optional)</label>
+            <input
+              id="assignment-create-upload"
+              type="file"
+              className="hidden"
+              onChange={(event) => setAssignmentFile(event.target.files?.[0] ?? null)}
+            />
+            <label
+              htmlFor="assignment-create-upload"
+              className="flex cursor-pointer items-center justify-between rounded-md border border-input px-3 py-2 text-sm text-muted-foreground transition hover:bg-muted/50"
+            >
+              <span className="truncate">{assignmentFile?.name ?? "Attach instructions, worksheet, or starter file"}</span>
+              <Upload className="size-4 shrink-0" />
+            </label>
           </div>
 
           {selectedSubjectId && studentOptions.length > 0 && (

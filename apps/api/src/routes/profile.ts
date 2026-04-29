@@ -31,6 +31,7 @@ import {
 } from "../controllers/profile.controller";
 import { getStudentContext } from "../services/scope.service";
 import { prisma } from "@repo/database";
+import { syncStudentProfileByUserId } from "../jobs/platformSync.job";
 import { updateBasicProfile } from "../services/student-profile.service";
 
 const router: ExpressRouter = Router();
@@ -65,6 +66,11 @@ router.patch("/update", authenticate, requirePermission("profile:update:own"), a
       isPublic,
       phoneNumber,
     });
+
+    if (typeof githubUsername === "string" && githubUsername.trim()) {
+      void syncStudentProfileByUserId(req.user!.id, "all").catch(() => undefined);
+    }
+
     res.json({ success: true, data: updated });
   } catch (err) {
     next(err);

@@ -17,6 +17,19 @@ type HackathonListItem = Hackathon;
 
 const FILTERS = ["All", "Open", "Upcoming", "Ongoing", "Completed"] as const;
 
+function getHackathonDisplayStatus(hackathon: Pick<HackathonListItem, "status" | "registrationDeadline" | "startDate" | "endDate">) {
+  const now = Date.now();
+  const registrationDeadline = new Date(hackathon.registrationDeadline).getTime();
+  const startDate = new Date(hackathon.startDate).getTime();
+  const endDate = new Date(hackathon.endDate).getTime();
+
+  if (hackathon.status === "CANCELLED") return "CANCELLED";
+  if (Number.isFinite(endDate) && endDate <= now) return "COMPLETED";
+  if (Number.isFinite(startDate) && startDate <= now && endDate > now) return "ONGOING";
+  if (Number.isFinite(registrationDeadline) && registrationDeadline > now && startDate > now) return "REGISTRATION_OPEN";
+  return hackathon.status;
+}
+
 export default function HackathonsPage() {
   const user = useAuthStore((state) => state.user);
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("All");
@@ -29,10 +42,10 @@ export default function HackathonsPage() {
   const hackathons = useMemo(() => {
     const items = data?.data ?? [];
     if (filter === "All") return items;
-    if (filter === "Open") return items.filter((item) => item.status === "REGISTRATION_OPEN");
-    if (filter === "Upcoming") return items.filter((item) => item.status === "UPCOMING");
-    if (filter === "Ongoing") return items.filter((item) => item.status === "ONGOING");
-    return items.filter((item) => item.status === "COMPLETED");
+    if (filter === "Open") return items.filter((item) => getHackathonDisplayStatus(item) === "REGISTRATION_OPEN");
+    if (filter === "Upcoming") return items.filter((item) => getHackathonDisplayStatus(item) === "UPCOMING");
+    if (filter === "Ongoing") return items.filter((item) => getHackathonDisplayStatus(item) === "ONGOING");
+    return items.filter((item) => getHackathonDisplayStatus(item) === "COMPLETED");
   }, [data?.data, filter]);
 
   return (
@@ -78,6 +91,7 @@ export default function HackathonsPage() {
         ) : (
           hackathons.map((hackathon) => {
             const now = new Date();
+            const displayStatus = getHackathonDisplayStatus(hackathon);
             const regDeadline = new Date(hackathon.registrationDeadline);
             const start = new Date(hackathon.startDate);
             const end = new Date(hackathon.endDate);
@@ -101,11 +115,11 @@ export default function HackathonsPage() {
                 {/* Image / Header Banner */}
                 <div className="relative h-28 bg-linear-to-r from-cyan-500/20 via-emerald-500/15 to-amber-500/20 p-5">
                   <div className="flex items-start justify-between">
-                    <Badge variant={hackathon.status === "ONGOING" ? "default" : "secondary"} className="bg-background/80 backdrop-blur-sm">
+                    <Badge variant={displayStatus === "ONGOING" ? "default" : "secondary"} className="bg-background/80 backdrop-blur-sm">
                       {hackathon.department?.name ?? "Open to All"}
                     </Badge>
                     <Badge variant="outline" className={`bg-background/80 backdrop-blur-sm shadow-sm ${isOngoing ? "border-green-500/50 text-green-600" : ""}`}>
-                      {hackathon.status.replace("_", " ")}
+                      {displayStatus.replace("_", " ")}
                     </Badge>
                   </div>
                 </div>

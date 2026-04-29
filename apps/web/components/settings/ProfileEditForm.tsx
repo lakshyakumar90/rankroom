@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { type ApiResponse, Role } from "@repo/types";
+import { buildHeatmapYearOptions, mergeActivityHeatmaps } from "@/lib/heatmap-merge";
 import { Github, Plus, RefreshCcw, Trash2, Upload } from "lucide-react";
 
 interface EditProfileData {
@@ -154,6 +155,15 @@ export default function ProfileEditPage({ initialTab }: ProfileEditPageProps) {
       void queryClient.invalidateQueries({
         queryKey: ["profile", "edit", user?.id],
       });
+      void queryClient.invalidateQueries({ queryKey: ["profile-heatmap"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["profile", "edit", "heatmap", user?.id],
+      });
+      if (user?.profile?.handle) {
+        void queryClient.invalidateQueries({
+          queryKey: ["public-profile", user.profile.handle],
+        });
+      }
       // Safely update local user name/handle if they changed
       if (res.data && user) {
         // Optionally merge if res.data contains the updated user
@@ -207,6 +217,15 @@ export default function ProfileEditPage({ initialTab }: ProfileEditPageProps) {
       void queryClient.invalidateQueries({
         queryKey: ["profile", "edit", user?.id],
       });
+      void queryClient.invalidateQueries({ queryKey: ["profile-heatmap"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["profile", "edit", "heatmap", user?.id],
+      });
+      if (user?.profile?.handle) {
+        void queryClient.invalidateQueries({
+          queryKey: ["public-profile", user.profile.handle],
+        });
+      }
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -353,34 +372,42 @@ export default function ProfileEditPage({ initialTab }: ProfileEditPageProps) {
   }, [studentProfile?.lastSyncedAt]);
 
   const profileHeatmap = studentProfile?.activityHeatmap ?? null;
-  const hasProfileHeatmapData = Object.keys(profileHeatmap ?? {}).length > 0;
-  const { data: heatmapResponse } = useQuery({
+  const { data: heatmapResponse, status: heatmapQueryStatus } = useQuery({
     queryKey: ["profile", "edit", "heatmap", user?.id],
     queryFn: () =>
       api.get<ApiResponse<Record<string, number>>>(
         `/api/profile/${encodeURIComponent(user!.id)}/heatmap`
       ),
-    enabled: !!user?.id && activeTab === "basic" && !hasProfileHeatmapData,
+    enabled: !!user?.id,
+    staleTime: 30_000,
+    refetchOnMount: "always",
   });
 
-  const effectiveHeatmap = useMemo(
-    () => (hasProfileHeatmapData ? (profileHeatmap ?? {}) : (heatmapResponse?.data ?? {})),
-    [hasProfileHeatmapData, profileHeatmap, heatmapResponse?.data]
+  const effectiveHeatmap = useMemo(() => {
+    const embedded = profileHeatmap ?? {};
+    const fromApi =
+      heatmapQueryStatus === "success" ? (heatmapResponse?.data ?? {}) : {};
+    if (heatmapQueryStatus === "success") {
+      return mergeActivityHeatmaps(embedded, fromApi);
+    }
+    return embedded;
+  }, [heatmapQueryStatus, heatmapResponse?.data, profileHeatmap]);
+
+  const hasAnyHeatmapEntries = Object.keys(effectiveHeatmap).some(
+    (key) => (effectiveHeatmap[key] ?? 0) > 0
   );
-  const hasAnyHeatmapEntries = Object.keys(effectiveHeatmap).length > 0;
-  const availableHeatmapYears = useMemo(() => {
-    const years = Object.keys(effectiveHeatmap)
-      .map((date) => Number.parseInt(date.slice(0, 4), 10))
-      .filter((value) => Number.isFinite(value));
-    return [...new Set(years)].sort((left, right) => right - left);
-  }, [effectiveHeatmap]);
+  const heatmapYearOptions = useMemo(
+    () => buildHeatmapYearOptions(effectiveHeatmap, 14),
+    [effectiveHeatmap]
+  );
+
   const [selectedHeatmapYear, setSelectedHeatmapYear] = useState(new Date().getFullYear());
 
   useEffect(() => {
-    if (availableHeatmapYears.length > 0 && !availableHeatmapYears.includes(selectedHeatmapYear)) {
-      setSelectedHeatmapYear(availableHeatmapYears[0]!);
+    if (heatmapYearOptions.length > 0 && !heatmapYearOptions.includes(selectedHeatmapYear)) {
+      setSelectedHeatmapYear(heatmapYearOptions[0]!);
     }
-  }, [availableHeatmapYears, selectedHeatmapYear]);
+  }, [heatmapYearOptions, selectedHeatmapYear]);
 
   const platformFields: Array<{
     field:
@@ -527,27 +554,21 @@ export default function ProfileEditPage({ initialTab }: ProfileEditPageProps) {
                       Track your daily consistency and contribution momentum.
                     </p>
                   </div>
-                  {availableHeatmapYears.length > 0 ? (
-                    <Select
-                      value={String(selectedHeatmapYear)}
-                      onValueChange={(value) => setSelectedHeatmapYear(Number.parseInt(value, 10))}
-                    >
-                      <SelectTrigger className="h-8 w-28 rounded-full">
-                        <SelectValue placeholder="Year" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {availableHeatmapYears.map((year) => (
-                          <SelectItem key={year} value={String(year)}>
-                            {year}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <Badge variant="outline" className="rounded-full px-2.5">
-                      {selectedHeatmapYear}
-                    </Badge>
-                  )}
+                  <Select
+                    value={String(selectedHeatmapYear)}
+                    onValueChange={(value) => setSelectedHeatmapYear(Number.parseInt(value, 10))}
+                  >
+                    <SelectTrigger className="h-8 w-28 rounded-full bg-background">
+                      <SelectValue placeholder="Year" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {heatmapYearOptions.map((year) => (
+                        <SelectItem key={year} value={String(year)}>
+                          {year}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 {hasAnyHeatmapEntries ? (
                   <div className="overflow-x-auto">

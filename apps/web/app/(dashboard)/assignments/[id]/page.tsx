@@ -19,6 +19,8 @@ import {
   CheckCircle2,
   AlertCircle,
   ArrowLeft,
+  FileText,
+  MessageSquare,
   Upload,
   Star,
 } from "lucide-react";
@@ -30,7 +32,10 @@ interface AssignmentSubmission {
   id: string;
   status: string;
   content?: string | null;
+  fileUrl?: string | null;
+  fileName?: string | null;
   grade?: number | null;
+  score?: number | null;
   feedback?: string | null;
   submittedAt?: string | null;
   gradedAt?: string | null;
@@ -42,7 +47,8 @@ interface AssignmentDetail {
   title: string;
   description?: string | null;
   dueDate: string;
-  maxMarks: number;
+  maxScore: number;
+  attachmentUrl?: string | null;
   status: string;
   subject: { id: string; name: string; code?: string | null };
   teacher: { id: string; name: string };
@@ -176,7 +182,7 @@ export default function AssignmentDetailPage({
           )}
           <span className="flex items-center gap-1.5">
             <Star className="size-3.5" />
-            {assignment.maxMarks} marks
+            {assignment.maxScore} marks
           </span>
         </div>
       </div>
@@ -217,6 +223,28 @@ export default function AssignmentDetailPage({
         </Card>
       )}
 
+      {/* Assignment attachment */}
+      {assignment.attachmentUrl && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Uploaded Assignment File</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 p-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <FileText className="size-4 shrink-0 text-muted-foreground" />
+                <span className="truncate text-sm">Assignment attachment</span>
+              </div>
+              <Button asChild variant="outline" size="sm">
+                <a href={assignment.attachmentUrl} target="_blank" rel="noreferrer">
+                  Open file
+                </a>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Student: submission area */}
       {isStudent && (
         <Card>
@@ -229,15 +257,36 @@ export default function AssignmentDetailPage({
             {hasSubmission ? (
               <div className="space-y-3">
                 {assignment.mySubmission?.content && (
-                  <div className="rounded-md bg-muted/40 p-3 text-sm whitespace-pre-wrap">
-                    {assignment.mySubmission.content}
+                  <div className="rounded-md border border-border bg-muted/40 p-3">
+                    <p className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                      <MessageSquare className="size-3.5" />
+                      Text response
+                    </p>
+                    <div className="text-sm whitespace-pre-wrap">
+                      {assignment.mySubmission.content}
+                    </div>
                   </div>
                 )}
-                {assignment.mySubmission?.grade != null && (
+                {assignment.mySubmission?.fileUrl && (
+                  <div className="flex items-center justify-between gap-3 rounded-md border border-border p-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <FileText className="size-4 shrink-0 text-muted-foreground" />
+                      <span className="truncate text-sm">
+                        {assignment.mySubmission.fileName ?? "Uploaded submission"}
+                      </span>
+                    </div>
+                    <Button asChild variant="outline" size="sm">
+                      <a href={assignment.mySubmission.fileUrl} target="_blank" rel="noreferrer">
+                        Open file
+                      </a>
+                    </Button>
+                  </div>
+                )}
+                {(assignment.mySubmission?.grade != null || assignment.mySubmission?.score != null) && (
                   <div className="flex items-center gap-2 text-sm">
                     <CheckCircle2 className="size-4 text-emerald-500" />
                     <span>
-                      Grade: <strong>{assignment.mySubmission.grade}</strong> / {assignment.maxMarks}
+                      Grade: <strong>{assignment.mySubmission.grade ?? assignment.mySubmission.score}</strong> / {assignment.maxScore}
                     </span>
                   </div>
                 )}
@@ -305,7 +354,7 @@ export default function AssignmentDetailPage({
           <CardHeader>
             <CardTitle className="text-sm flex items-center justify-between">
               <span>Submissions ({submissions.length} / {assignment._count?.submissions ?? submissions.length})</span>
-              <Badge variant="outline">{assignment.maxMarks} marks</Badge>
+              <Badge variant="outline">{assignment.maxScore} marks</Badge>
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -321,6 +370,7 @@ export default function AssignmentDetailPage({
                   <TableRow>
                     <TableHead>Student</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Uploaded work</TableHead>
                     <TableHead>Grade</TableHead>
                     <TableHead>Submitted At</TableHead>
                   </TableRow>
@@ -335,8 +385,29 @@ export default function AssignmentDetailPage({
                         </span>
                       </TableCell>
                       <TableCell>
-                        {sub.grade != null ? (
-                          <span>{sub.grade} / {assignment.maxMarks}</span>
+                        <div className="flex flex-col gap-2">
+                          {sub.content ? (
+                            <details className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+                              <summary className="cursor-pointer font-medium">View text response</summary>
+                              <p className="mt-2 whitespace-pre-wrap text-muted-foreground">{sub.content}</p>
+                            </details>
+                          ) : null}
+                          {sub.fileUrl ? (
+                            <Button asChild variant="outline" size="sm" className="w-fit">
+                              <a href={sub.fileUrl} target="_blank" rel="noreferrer">
+                                <FileText className="mr-2 size-4" />
+                                Open uploaded file
+                              </a>
+                            </Button>
+                          ) : null}
+                          {!sub.content && !sub.fileUrl ? (
+                            <span className="text-xs text-muted-foreground">No uploaded content</span>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {sub.grade != null || sub.score != null ? (
+                          <span>{sub.grade ?? sub.score} / {assignment.maxScore}</span>
                         ) : (
                           <span className="text-muted-foreground text-xs">Not graded</span>
                         )}

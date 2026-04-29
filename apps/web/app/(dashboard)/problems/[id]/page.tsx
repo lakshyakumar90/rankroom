@@ -138,8 +138,6 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
   const setRunning = useProblemStore((s) => s.setRunning);
   const setSubmitting = useProblemStore((s) => s.setSubmitting);
 
-  const { submitCode } = useSubmission(id, contestId);
-
   // ── Data fetching ──────────────────────────────────────────────────────────
 
   const { data, isLoading } = useQuery({
@@ -164,6 +162,7 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
   });
 
   const problem = data?.data;
+  const { submitCode } = useSubmission(problem?.id ?? id, contestId);
   const canPractice = user?.role === Role.STUDENT;
   const contestContext = problem?.contestContext ?? null;
   const history = historyData?.data ?? [];

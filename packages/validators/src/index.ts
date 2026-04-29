@@ -3,6 +3,13 @@ import { z } from "zod";
 const cuid = () => z.string().cuid();
 const optionalCuid = () => z.preprocess((value) => (value === "" ? undefined : value), cuid().optional());
 
+const examMaxMarks = {
+  MID: 25,
+  FINAL: 50,
+  ASSIGNMENT: 15,
+  INTERNAL: 10,
+} as const;
+
 export const roleSchema = z.enum([
   "SUPER_ADMIN",
   "ADMIN",
@@ -159,6 +166,10 @@ export const createGradeSchema = z
   .refine((data) => data.marks <= data.maxMarks, {
     message: "marks cannot exceed maxMarks",
     path: ["marks"],
+  })
+  .refine((data) => data.maxMarks === examMaxMarks[data.examType], {
+    message: "maxMarks must match the selected exam type",
+    path: ["maxMarks"],
   });
 
 export const bulkCreateGradesSchema = z.object({
@@ -179,6 +190,13 @@ export const bulkCreateGradesSchema = z.object({
     (data) => ({
       message: `One or more marks exceed the maximum of ${data.maxMarks}`,
       path: ["grades"],
+    })
+  )
+  .refine(
+    (data) => data.maxMarks === examMaxMarks[data.examType],
+    (data) => ({
+      message: `Max marks for ${data.examType} must be ${examMaxMarks[data.examType]}`,
+      path: ["maxMarks"],
     })
   );
 
@@ -224,10 +242,10 @@ export const createAssignmentSchema = z.object({
   description: z.string().min(10),
   subjectId: cuid(),
   dueDate: z.string().datetime(),
-  maxScore: z.number().min(1).max(1000),
+  maxScore: z.coerce.number().min(1).max(1000),
   type: z.enum(["CODING", "FILE_UPLOAD", "MCQ", "MIXED"]).optional(),
   allowLate: z.boolean().optional(),
-  latePenaltyPct: z.number().int().min(0).max(100).optional(),
+  latePenaltyPct: z.coerce.number().int().min(0).max(100).optional(),
   rubric: z.array(
     z.object({
       id: z.string().min(1).max(80).optional(),
@@ -236,7 +254,20 @@ export const createAssignmentSchema = z.object({
       description: z.string().max(1000).optional(),
     })
   ).optional().default([]),
-  targetStudentIds: z.array(cuid()).optional().default([]),
+  targetStudentIds: z.preprocess((value) => {
+    if (value === undefined) return [];
+    if (Array.isArray(value)) return value;
+    if (typeof value === "string") {
+      if (!value.trim()) return [];
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [value];
+      } catch {
+        return [value];
+      }
+    }
+    return value;
+  }, z.array(cuid()).optional().default([])),
 });
 
 export const gradeSubmissionSchema = z.object({

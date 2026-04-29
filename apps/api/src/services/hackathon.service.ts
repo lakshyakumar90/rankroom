@@ -33,6 +33,36 @@ async function getStudentDepartmentId(userId: string) {
   return enrollment?.section.departmentId ?? null;
 }
 
+export async function syncHackathonStatuses() {
+  const now = new Date();
+
+  await Promise.all([
+    prisma.hackathon.updateMany({
+      where: {
+        status: { in: ["UPCOMING", "REGISTRATION_OPEN", "ONGOING"] },
+        endDate: { lte: now },
+      },
+      data: { status: "COMPLETED" },
+    }),
+    prisma.hackathon.updateMany({
+      where: {
+        status: { in: ["UPCOMING", "REGISTRATION_OPEN"] },
+        startDate: { lte: now },
+        endDate: { gt: now },
+      },
+      data: { status: "ONGOING" },
+    }),
+    prisma.hackathon.updateMany({
+      where: {
+        status: "UPCOMING",
+        registrationDeadline: { gt: now },
+        startDate: { gt: now },
+      },
+      data: { status: "REGISTRATION_OPEN" },
+    }),
+  ]);
+}
+
 async function getInvitedAudienceIds(hackathonId: string) {
   const rows = await prisma.hackathonAudience.findMany({
     where: { hackathonId },
@@ -114,6 +144,8 @@ export async function computeHackathonEligibility(hackathonId: string, userId: s
 }
 
 export async function listHackathons(viewer?: JWTPayload, status?: string) {
+  await syncHackathonStatuses();
+
   const departmentIds = viewer?.scope.departmentIds ?? [];
   const where =
     viewer?.role === Role.STUDENT
@@ -154,6 +186,8 @@ export async function listHackathons(viewer?: JWTPayload, status?: string) {
 }
 
 export async function getHackathon(viewer: JWTPayload | undefined, hackathonId: string) {
+  await syncHackathonStatuses();
+
   const hackathon = await prisma.hackathon.findUnique({
     where: { id: hackathonId },
     include: {
@@ -312,6 +346,8 @@ export async function deleteHackathon(id: string) {
 }
 
 export async function registerForHackathon(hackathonId: string, userId: string, teamId?: string | null) {
+  await syncHackathonStatuses();
+
   const hackathon = await prisma.hackathon.findUnique({ where: { id: hackathonId } });
   if (!hackathon) throw new AppError("Hackathon not found", 404);
   if (hackathon.registrationDeadline < new Date()) {
@@ -437,6 +473,8 @@ export async function getHackathonRegistrations(hackathonId: string) {
 }
 
 export async function createHackathonTeam(hackathonId: string, leaderId: string, payload: { name: string; memberUserIds?: string[] }) {
+  await syncHackathonStatuses();
+
   const hackathon = await prisma.hackathon.findUnique({ where: { id: hackathonId } });
   if (!hackathon) throw new AppError("Hackathon not found", 404);
   if (hackathon.registrationDeadline < new Date()) throw new AppError("Hackathon registration deadline has passed", 400);

@@ -210,11 +210,12 @@ export default function GradesPage() {
     const byStudentId = new Map(existingGrades.map((entry) => [entry.studentId, entry]));
     const nextMarks: Record<string, string> = {};
     const nextRemarks: Record<string, string> = {};
+    const examMax = EXAM_MAX_MARKS[examType];
 
     roster.forEach((entry) => {
       const existing = byStudentId.get(entry.student.id);
       if (existing) {
-        nextMarks[entry.student.id] = String(existing.marks);
+        nextMarks[entry.student.id] = existing.marks <= examMax ? String(existing.marks) : "";
         nextRemarks[entry.student.id] = existing.remarks ?? "";
       }
     });
@@ -222,10 +223,9 @@ export default function GradesPage() {
     if (selectedBatch && selectedSubject && (existingGrades.length > 0 || roster.length > 0)) {
       setMarks(nextMarks);
       setRemarks(nextRemarks);
-      const existingMax = existingGrades[0]?.maxMarks;
-      if (existingMax) setMaxMarks(existingMax);
+      setMaxMarks(examMax);
     }
-  }, [existingGrades, roster, selectedBatch, selectedSubject]);
+  }, [examType, existingGrades, roster, selectedBatch, selectedSubject]);
 
   const gradesBySubject = grades.reduce<Record<string, { name: string; code: string; grades: typeof grades }>>((acc, g) => {
     const key = g.subjectId;
@@ -318,17 +318,17 @@ export default function GradesPage() {
               <Input type="number" min={1} max={10} value={semester} onChange={(e) => setSemester(Number(e.target.value) || 1)} />
             </div>
 
-            {/* Max Marks (auto-set but overridable) */}
+            {/* Max Marks */}
             <div className="space-y-1.5">
               <label className="text-sm font-medium">
                 Max Marks
-                <span className="ml-1 text-xs text-muted-foreground">(auto)</span>
+                <span className="ml-1 text-xs text-muted-foreground">(fixed)</span>
               </label>
               <Input
                 type="number"
                 min={1}
                 value={maxMarks}
-                onChange={(e) => setMaxMarks(Number(e.target.value) || 1)}
+                readOnly
                 className="border-primary/40"
               />
             </div>

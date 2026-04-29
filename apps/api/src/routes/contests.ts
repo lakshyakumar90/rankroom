@@ -481,9 +481,26 @@ router.post("/:id/submit", authenticate, contestSubmissionLimiter, validate(cont
       throw new AppError("Forbidden", 403);
     }
 
+    const contestProblem = await prisma.contestProblem.findFirst({
+      where: {
+        contestId,
+        problem: {
+          OR: [{ id: problemId }, { slug: problemId }],
+          isPublished: true,
+        },
+      },
+      select: { problem: { select: { id: true } } },
+    });
+
+    if (!contestProblem) {
+      throw new AppError("Contest problem not found", 404);
+    }
+
+    const resolvedProblemId = contestProblem.problem.id;
+
     // Check if already accepted — no re-submission after AC
     const acceptedAttempt = await prisma.submission.findFirst({
-      where: { contestId, problemId, userId: req.user!.id, status: "ACCEPTED" },
+      where: { contestId, problemId: resolvedProblemId, userId: req.user!.id, status: "ACCEPTED" },
     });
 
     if (acceptedAttempt) {
@@ -491,13 +508,13 @@ router.post("/:id/submit", authenticate, contestSubmissionLimiter, validate(cont
     }
 
     const submission = await prisma.submission.create({
-      data: { userId: req.user!.id, problemId, code, language, status: "PENDING", contestId },
+      data: { userId: req.user!.id, problemId: resolvedProblemId, code, language, status: "PENDING", contestId },
     });
 
     await submissionQueue.add("submission" as const, {
       submissionId: submission.id,
       userId: req.user!.id,
-      problemId,
+      problemId: resolvedProblemId,
       source_code: code,
       language,
       contestId,

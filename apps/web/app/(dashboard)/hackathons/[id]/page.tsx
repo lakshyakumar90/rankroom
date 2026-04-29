@@ -89,6 +89,19 @@ interface HackathonDetail {
 
 const STAFF_ROLES = ["ADMIN", "SUPER_ADMIN", "TEACHER", "CLASS_COORDINATOR", "DEPARTMENT_HEAD"];
 
+function getHackathonDisplayStatus(hackathon: Pick<HackathonDetail, "status" | "registrationDeadline" | "startDate" | "endDate">) {
+  const now = Date.now();
+  const registrationDeadline = new Date(hackathon.registrationDeadline).getTime();
+  const startDate = new Date(hackathon.startDate).getTime();
+  const endDate = new Date(hackathon.endDate).getTime();
+
+  if (hackathon.status === "CANCELLED") return "CANCELLED";
+  if (Number.isFinite(endDate) && endDate <= now) return "COMPLETED";
+  if (Number.isFinite(startDate) && startDate <= now && endDate > now) return "ONGOING";
+  if (Number.isFinite(registrationDeadline) && registrationDeadline > now && startDate > now) return "REGISTRATION_OPEN";
+  return hackathon.status;
+}
+
 export default function HackathonDetailPage() {
   const params = useParams<{ id: string }>();
   const queryClient = useQueryClient();
@@ -207,7 +220,8 @@ export default function HackathonDetailPage() {
 
   const now = new Date();
   const regDeadline = new Date(hackathon.registrationDeadline);
-  const isRegOpen = now < regDeadline;
+  const displayStatus = getHackathonDisplayStatus(hackathon);
+  const isRegOpen = now < regDeadline && displayStatus === "REGISTRATION_OPEN";
 
   return (
     <div className="space-y-6 p-6 max-w-5xl">
@@ -220,7 +234,7 @@ export default function HackathonDetailPage() {
       {/* Header */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline">{hackathon.status.replace("_", " ")}</Badge>
+          <Badge variant="outline">{displayStatus.replace("_", " ")}</Badge>
           <Badge variant="secondary">{hackathon.department?.name ?? "Global / Open"}</Badge>
           {isRegOpen && <Badge variant="outline" className="border-emerald-500/30 text-emerald-600">Registration Open</Badge>}
         </div>

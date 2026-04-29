@@ -15,6 +15,7 @@ import {
 import { getStudentContext } from "../services/scope.service";
 import {
   getAttendanceSession,
+  getScopedAttendanceOverview,
   getStudentSubjectAttendance,
   getStudentOverallAttendance,
 } from "../services/attendance.service";
@@ -149,6 +150,15 @@ router.patch(
     }
   }
 );
+
+router.get("/overview", async (req, res, next) => {
+  try {
+    const data = await getScopedAttendanceOverview(req.user!);
+    res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get(
   "/student/:studentId",

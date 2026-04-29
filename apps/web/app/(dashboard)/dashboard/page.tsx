@@ -33,6 +33,7 @@ import {
   Building2,
   ClipboardList,
   Code2,
+  Info,
   Search,
   Trophy,
   Users,
@@ -435,6 +436,19 @@ export default function DashboardPage() {
     );
   }, [isStudent, studentData, leaderboardBreakdownData, filteredLeaderboardItems, user?.id]);
 
+  const studentSummary = studentData?.data?.studentSummary ?? null;
+  const studentLeaderboard = studentData?.data?.leaderboard ?? null;
+  const studentSection = studentSummary?.section ?? user?.enrollments?.[0]?.section ?? null;
+  const studentDepartment = studentSummary?.department ?? user?.enrollments?.[0]?.section?.department ?? null;
+  const hasStudentSection = Boolean(studentSection?.id);
+  const skillHistory = studentSkillData?.data?.history ?? [];
+  const hasSkillHistory = skillHistory.some((entry) => entry.activityScore > 0 || entry.consistencyScore > 0);
+  const studentHasActivity = Boolean(
+    (studentLeaderboard?.totalPoints ?? 0) > 0 ||
+      (studentLeaderboard?.problemsSolved ?? 0) > 0 ||
+      (studentSkillData?.data?.summary.activityScore ?? 0) > 0
+  );
+
   const showSectionColumn = useMemo(
     () =>
       isDepartmentHead ||
@@ -467,11 +481,37 @@ export default function DashboardPage() {
       {role === Role.STUDENT ? (
         <>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <MetricCard title="Total points" value={studentData?.data?.leaderboard?.totalPoints ?? 0} icon={Trophy} loading={studentLoading} />
-            <MetricCard title="Problems solved" value={studentData?.data?.leaderboard?.problemsSolved ?? 0} icon={Code2} loading={studentLoading} />
-            <MetricCard title="Global rank" value={studentData?.data?.leaderboard?.rank ? `#${studentData.data.leaderboard.rank}` : "Unranked"} icon={Award} loading={studentLoading} />
-            <MetricCard title="Current streak" value={studentData?.data?.leaderboard?.currentStreak ?? 0} icon={ClipboardList} loading={studentLoading} />
+            <MetricCard title="Total points" value={studentLeaderboard?.totalPoints ?? 0} description={studentHasActivity ? undefined : "Earn points by solving problems and joining activities."} icon={Trophy} loading={studentLoading} />
+            <MetricCard title="Problems solved" value={studentLeaderboard?.problemsSolved ?? 0} description={studentHasActivity ? undefined : "Start with an easy problem to unlock progress."} icon={Code2} loading={studentLoading} />
+            <MetricCard title="Global rank" value={studentLeaderboard?.rank ? `#${studentLeaderboard.rank}` : "Unranked"} description={studentLeaderboard?.rank ? undefined : "Rank appears after leaderboard activity is recorded."} icon={Award} loading={studentLoading} />
+            <MetricCard title="Current streak" value={studentLeaderboard?.currentStreak ?? 0} description={studentLeaderboard?.currentStreak ? undefined : "Submit consistently to build a streak."} icon={ClipboardList} loading={studentLoading} />
           </div>
+
+          {!studentLoading && !hasStudentSection ? (
+            <Card className="border-primary/20 bg-primary/5">
+              <CardContent className="flex flex-col gap-5 p-5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex gap-4">
+                  <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                    <Info className="size-6" />
+                  </div>
+                  <div>
+                    <p className="font-semibold">Your academic assignment is pending</p>
+                    <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
+                      Your account is active, but it has not been linked to a section yet. Section, department, section rank,
+                      attendance, grades, and class leaderboard data will appear after an admin assigns you to a section.
+                    </p>
+                  </div>
+                </div>
+                <Button asChild variant="outline" className="shrink-0">
+                  <Link href="/problems">
+                    Practice meanwhile
+                    <ArrowRight className="size-4" />
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
+          ) : null}
+
           <Card>
             <CardHeader>
               <CardTitle>Your academic snapshot</CardTitle>
@@ -483,22 +523,22 @@ export default function DashboardPage() {
                   <div
                     className="flex size-12 items-center justify-center overflow-hidden rounded-full border border-border bg-background text-sm font-semibold"
                     style={
-                      studentData?.data?.studentSummary?.avatar
+                      studentSummary?.avatar
                         ? {
-                            backgroundImage: `url(${studentData.data.studentSummary.avatar})`,
+                            backgroundImage: `url(${studentSummary.avatar})`,
                             backgroundSize: "cover",
                             backgroundPosition: "center",
                           }
                         : undefined
                     }
                   >
-                    {!studentData?.data?.studentSummary?.avatar ? user?.name?.slice(0, 2).toUpperCase() : null}
+                    {!studentSummary?.avatar ? user?.name?.slice(0, 2).toUpperCase() : null}
                   </div>
                   <div className="min-w-0">
-                    <p className="truncate font-medium">{user?.name}</p>
+                    <p className="truncate font-medium">{user?.name ?? "Student"}</p>
                     <p className="break-all text-sm text-muted-foreground">
-                      {studentData?.data?.studentSummary?.student?.student.githubUsername
-                        ? `github.com/${studentData.data.studentSummary.student.student.githubUsername}`
+                      {studentSummary?.student?.student.githubUsername
+                        ? `github.com/${studentSummary.student.student.githubUsername}`
                         : user?.email}
                     </p>
                   </div>
@@ -508,9 +548,10 @@ export default function DashboardPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm text-muted-foreground">Section</p>
-                    <p className="mt-3 break-words text-3xl font-semibold leading-tight">
-                      {studentData?.data?.studentSummary?.section?.name ?? "Not assigned"}
+                    <p className="mt-3 wrap-break-word text-3xl font-semibold leading-tight">
+                      {studentSection?.name ?? "Pending assignment"}
                     </p>
+                    {studentSection?.code ? <p className="mt-1 text-sm text-muted-foreground">{studentSection.code}</p> : null}
                   </div>
                   <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-muted/70">
                     <BookOpen className="size-5 text-muted-foreground" />
@@ -521,9 +562,10 @@ export default function DashboardPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm text-muted-foreground">Department</p>
-                    <p className="mt-3 break-words text-3xl font-semibold leading-tight">
-                      {studentData?.data?.studentSummary?.department?.name ?? "Not assigned"}
+                    <p className="mt-3 wrap-break-word text-3xl font-semibold leading-tight">
+                      {studentDepartment?.name ?? "Pending assignment"}
                     </p>
+                    {studentDepartment?.code ? <p className="mt-1 text-sm text-muted-foreground">{studentDepartment.code}</p> : null}
                   </div>
                   <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-muted/70">
                     <Building2 className="size-5 text-muted-foreground" />
@@ -535,7 +577,7 @@ export default function DashboardPage() {
                   <div className="min-w-0">
                     <p className="text-sm text-muted-foreground">Section rank</p>
                     <p className="mt-3 text-3xl font-semibold leading-tight">
-                      {studentData?.data?.leaderboard?.sectionRank ? `#${studentData.data.leaderboard.sectionRank}` : "Unranked"}
+                      {studentLeaderboard?.sectionRank ? `#${studentLeaderboard.sectionRank}` : hasStudentSection ? "Unranked" : "Pending"}
                     </p>
                   </div>
                   <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-muted/70">
@@ -548,7 +590,7 @@ export default function DashboardPage() {
                   <div className="min-w-0">
                     <p className="text-sm text-muted-foreground">Department rank</p>
                     <p className="mt-3 text-3xl font-semibold leading-tight">
-                      {studentData?.data?.leaderboard?.departmentRank ? `#${studentData.data.leaderboard.departmentRank}` : "Unranked"}
+                      {studentLeaderboard?.departmentRank ? `#${studentLeaderboard.departmentRank}` : hasStudentSection ? "Unranked" : "Pending"}
                     </p>
                   </div>
                   <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-muted/70">
@@ -606,6 +648,22 @@ export default function DashboardPage() {
                 ) : (
                   <p className="text-sm text-muted-foreground">Solve tagged problems and sync your profiles to unlock your skill graph.</p>
                 )}
+                {!studentSkillLoading && !studentHasActivity ? (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Button asChild variant="outline">
+                      <Link href="/problems">
+                        Solve your first problem
+                        <ArrowRight className="size-4" />
+                      </Link>
+                    </Button>
+                    <Button asChild variant="outline">
+                      <Link href="/profile/edit">
+                        Complete your profile
+                        <ArrowRight className="size-4" />
+                      </Link>
+                    </Button>
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
 
@@ -621,18 +679,24 @@ export default function DashboardPage() {
                   </div>
                 ) : (
                   <>
-                    <div className="h-40">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={studentSkillData?.data?.history ?? []}>
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                          <YAxis tick={{ fontSize: 11 }} />
-                          <RechartsTooltip />
-                          <Line type="monotone" dataKey="activityScore" stroke="#f97316" strokeWidth={2} dot={false} />
-                          <Line type="monotone" dataKey="consistencyScore" stroke="#22c55e" strokeWidth={2} dot={false} />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
+                    {hasSkillHistory ? (
+                      <div className="h-40">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={skillHistory}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                            <YAxis tick={{ fontSize: 11 }} />
+                            <RechartsTooltip />
+                            <Line type="monotone" dataKey="activityScore" stroke="#f97316" strokeWidth={2} dot={false} />
+                            <Line type="monotone" dataKey="consistencyScore" stroke="#22c55e" strokeWidth={2} dot={false} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-dashed border-border bg-muted/20 p-5 text-sm text-muted-foreground">
+                        Your growth chart will appear after you solve problems or sync coding profiles.
+                      </div>
+                    )}
                     {studentSkillData?.data?.coachAdvice ? (
                       <div className="rounded-xl border border-border bg-muted/20 p-4">
                         <p className="text-sm font-semibold">{studentSkillData.data.coachAdvice.warning}</p>

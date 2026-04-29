@@ -6,6 +6,8 @@ export function useCurrentUser() {
   return { user: useAuthStore((state) => state.user) };
 }
 
+let hydrateUserPromise: Promise<AuthUser | null> | null = null;
+
 // ============================================================================
 // AUTH TOKEN UTILITY
 // ============================================================================
@@ -29,7 +31,7 @@ export async function getAuthToken(): Promise<string | null> {
  * This is the ONLY way to populate user state
  * @returns AuthUser if successful, null otherwise
  */
-export async function hydrateUser(): Promise<AuthUser | null> {
+async function hydrateUserInternal(): Promise<AuthUser | null> {
   try {
     const token = await getAuthToken();
     if (!token) {
@@ -100,6 +102,14 @@ export async function hydrateUser(): Promise<AuthUser | null> {
     console.error("Error hydrating user:", error);
     return null;
   }
+}
+
+export async function hydrateUser(): Promise<AuthUser | null> {
+  hydrateUserPromise ??= hydrateUserInternal().finally(() => {
+    hydrateUserPromise = null;
+  });
+
+  return hydrateUserPromise;
 }
 
 // ============================================================================

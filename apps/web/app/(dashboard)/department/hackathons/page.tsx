@@ -19,11 +19,25 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { PermissionGate } from "@/components/auth/PermissionGate";
+import { Label } from "@/components/ui/label";
 import type { ApiResponse, Hackathon } from "@repo/types";
 import { CalendarDays, Trophy } from "lucide-react";
 import { toast } from "sonner";
 
 type HackathonListItem = Hackathon;
+
+function getHackathonDisplayStatus(hackathon: Pick<HackathonListItem, "status" | "registrationDeadline" | "startDate" | "endDate">) {
+  const now = Date.now();
+  const registrationDeadline = new Date(hackathon.registrationDeadline).getTime();
+  const startDate = new Date(hackathon.startDate).getTime();
+  const endDate = new Date(hackathon.endDate).getTime();
+
+  if (hackathon.status === "CANCELLED") return "CANCELLED";
+  if (Number.isFinite(endDate) && endDate <= now) return "COMPLETED";
+  if (Number.isFinite(startDate) && startDate <= now && endDate > now) return "ONGOING";
+  if (Number.isFinite(registrationDeadline) && registrationDeadline > now && startDate > now) return "REGISTRATION_OPEN";
+  return hackathon.status;
+}
 
 interface ClassOption {
   id: string;
@@ -144,36 +158,129 @@ export default function DepartmentHackathonsPage() {
           <CardHeader>
             <CardTitle className="text-base">Create Hackathon / Event</CardTitle>
           </CardHeader>
-          <CardContent className="grid gap-3 md:grid-cols-2">
-            <Input placeholder="Event title" value={form.title} onChange={(e) => setForm((current) => ({ ...current, title: e.target.value }))} />
-            <Input placeholder="Prize details" value={form.prizeDetails} onChange={(e) => setForm((current) => ({ ...current, prizeDetails: e.target.value }))} />
-            <Textarea
-              className="md:col-span-2"
-              placeholder="Description"
-              value={form.description}
-              onChange={(e) => setForm((current) => ({ ...current, description: e.target.value }))}
-            />
-            <Input type="datetime-local" value={form.registrationDeadline} onChange={(e) => setForm((current) => ({ ...current, registrationDeadline: e.target.value }))} />
-            <Input type="datetime-local" value={form.startDate} onChange={(e) => setForm((current) => ({ ...current, startDate: e.target.value }))} />
-            <Input type="datetime-local" value={form.endDate} onChange={(e) => setForm((current) => ({ ...current, endDate: e.target.value }))} />
-            <Input type="number" min="1" value={form.minTeamSize} onChange={(e) => setForm((current) => ({ ...current, minTeamSize: Number(e.target.value || 1) }))} />
-            <Input type="number" min="1" value={form.maxTeamSize} onChange={(e) => setForm((current) => ({ ...current, maxTeamSize: Number(e.target.value || 1) }))} />
-            <Input type="number" min="0" value={form.minProjects} onChange={(e) => setForm((current) => ({ ...current, minProjects: Number(e.target.value || 0) }))} />
-            <Input type="number" min="0" value={form.minLeetcode} onChange={(e) => setForm((current) => ({ ...current, minLeetcode: Number(e.target.value || 0) }))} />
-            <Input placeholder="Min CGPA (optional)" value={form.minCgpa} onChange={(e) => setForm((current) => ({ ...current, minCgpa: e.target.value }))} />
-            <Select value={targetSectionId || "none"} onValueChange={(value) => setTargetSectionId(value === "none" ? "" : value)}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Whole department / open eligible students" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value="none">Whole department / open eligible students</SelectItem>
-                  {(classesData?.data ?? []).map((section) => (
-                    <SelectItem key={section.id} value={section.id}>{section.name}</SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+          <CardContent className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="hackathon-create-title">Event title</Label>
+              <Input
+                id="hackathon-create-title"
+                placeholder="e.g. Winter Build Sprint"
+                value={form.title}
+                onChange={(e) => setForm((current) => ({ ...current, title: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="hackathon-create-prize">Prize details</Label>
+              <Input
+                id="hackathon-create-prize"
+                placeholder="Cash, vouchers, internships…"
+                value={form.prizeDetails}
+                onChange={(e) => setForm((current) => ({ ...current, prizeDetails: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="hackathon-create-description">Description</Label>
+              <Textarea
+                id="hackathon-create-description"
+                className="min-h-28"
+                placeholder="What participants build, rules, judging, etc."
+                value={form.description}
+                onChange={(e) => setForm((current) => ({ ...current, description: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="hackathon-create-registration-deadline">Registration closes</Label>
+              <Input
+                id="hackathon-create-registration-deadline"
+                type="datetime-local"
+                value={form.registrationDeadline}
+                onChange={(e) => setForm((current) => ({ ...current, registrationDeadline: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="hackathon-create-start">Starts</Label>
+              <Input
+                id="hackathon-create-start"
+                type="datetime-local"
+                value={form.startDate}
+                onChange={(e) => setForm((current) => ({ ...current, startDate: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="hackathon-create-end">Ends</Label>
+              <Input
+                id="hackathon-create-end"
+                type="datetime-local"
+                value={form.endDate}
+                onChange={(e) => setForm((current) => ({ ...current, endDate: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="hackathon-create-min-team">Min team size</Label>
+              <Input
+                id="hackathon-create-min-team"
+                type="number"
+                min={1}
+                value={form.minTeamSize}
+                onChange={(e) => setForm((current) => ({ ...current, minTeamSize: Number(e.target.value || 1) }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="hackathon-create-max-team">Max team size</Label>
+              <Input
+                id="hackathon-create-max-team"
+                type="number"
+                min={1}
+                value={form.maxTeamSize}
+                onChange={(e) => setForm((current) => ({ ...current, maxTeamSize: Number(e.target.value || 1) }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="hackathon-create-min-projects">Min projects (eligibility)</Label>
+              <Input
+                id="hackathon-create-min-projects"
+                type="number"
+                min={0}
+                value={form.minProjects}
+                onChange={(e) => setForm((current) => ({ ...current, minProjects: Number(e.target.value || 0) }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="hackathon-create-min-leetcode">Min LeetCode solved</Label>
+              <Input
+                id="hackathon-create-min-leetcode"
+                type="number"
+                min={0}
+                value={form.minLeetcode}
+                onChange={(e) => setForm((current) => ({ ...current, minLeetcode: Number(e.target.value || 0) }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="hackathon-create-min-cgpa">Min CGPA</Label>
+              <Input
+                id="hackathon-create-min-cgpa"
+                placeholder="Optional"
+                value={form.minCgpa}
+                onChange={(e) => setForm((current) => ({ ...current, minCgpa: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="hackathon-create-section">Audience — section (optional)</Label>
+              <Select value={targetSectionId || "none"} onValueChange={(value) => setTargetSectionId(value === "none" ? "" : value)}>
+                <SelectTrigger id="hackathon-create-section" className="w-full">
+                  <SelectValue placeholder="Whole department / open eligible students" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="none">Whole department / open eligible students</SelectItem>
+                    {(classesData?.data ?? []).map((section) => (
+                      <SelectItem key={section.id} value={section.id}>
+                        {section.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
             {targetSectionId ? (
               <div className="space-y-2 md:col-span-2">
                 <p className="text-sm font-medium">Selected students (optional)</p>
@@ -215,13 +322,16 @@ export default function DepartmentHackathonsPage() {
             <Card key={index} className="h-64 animate-pulse" />
           ))
         ) : (
-          hackathons.map((hackathon) => (
+          hackathons.map((hackathon) => {
+            const displayStatus = getHackathonDisplayStatus(hackathon);
+
+            return (
             <Card key={hackathon.id} className="overflow-hidden">
-              <div className="h-24 bg-gradient-to-r from-sky-500/30 via-emerald-500/20 to-amber-500/20" />
+              <div className="h-24 bg-linear-to-r from-sky-500/30 via-emerald-500/20 to-amber-500/20" />
               <CardHeader>
                 <div className="flex items-center justify-between gap-3">
                   <CardTitle className="text-lg">{hackathon.title}</CardTitle>
-                  <Badge variant="outline">{hackathon.status}</Badge>
+                  <Badge variant="outline">{displayStatus}</Badge>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -240,7 +350,8 @@ export default function DepartmentHackathonsPage() {
                 </div>
               </CardContent>
             </Card>
-          ))
+            );
+          })
         )}
       </div>
     </div>

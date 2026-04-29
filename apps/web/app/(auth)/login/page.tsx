@@ -62,13 +62,6 @@ function LoginPageContent() {
         throw new Error(sessionError.message);
       }
 
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        throw new Error("Failed to start browser session");
-      }
-
       setUser(result.data.user);
       toast.success("Welcome back");
 

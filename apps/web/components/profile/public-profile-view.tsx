@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ActivityHeatmap } from "@repo/ui/charts/ActivityHeatmap";
 import { api } from "@/lib/api";
@@ -20,6 +20,7 @@ import {
 import { useAuthStore } from "@/store/auth";
 import { toast } from "sonner";
 import type { ApiResponse, Role } from "@repo/types";
+import { buildHeatmapYearOptions, mergeActivityHeatmaps } from "@/lib/heatmap-merge";
 import {
   Award,
   BookOpen,
@@ -189,75 +190,80 @@ export function PublicProfileView({ username }: { username: string }) {
     onSuccess: () => {
       toast.success("Sync triggered successfully!");
       void queryClient.invalidateQueries({ queryKey: ["public-profile", username] });
+      void queryClient.invalidateQueries({ queryKey: ["profile-heatmap"] });
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
-  // If profile activityHeatmap is empty, fetch it from the heatmap endpoint (builds from submissions)
-  const embeddedHeatmapTotal = useMemo(
-    () =>
-      Object.values(profile?.studentProfile?.activityHeatmap ?? {}).reduce(
-        (sum, value) => sum + Math.max(0, value ?? 0),
-        0
-      ),
-    [profile?.studentProfile?.activityHeatmap]
-  );
-  const hasHeatmapData = embeddedHeatmapTotal > 0;
-  const { data: heatmapData } = useQuery({
+  const embeddedHeatmap = profile?.studentProfile?.activityHeatmap ?? {};
+
+  const { data: heatmapData, status: heatmapQueryStatus } = useQuery({
     queryKey: ["profile-heatmap", profile?.id],
     queryFn: () =>
       api.get<ApiResponse<Record<string, number>>>(
         `/api/profile/${encodeURIComponent(profile!.id)}/heatmap`
       ),
-    enabled:
-      !!profile?.id &&
-      !hasHeatmapData &&
-      (activeTab === "overview" || !activeTab),
+    enabled: !!profile?.id,
+    staleTime: 30_000,
+    refetchOnMount: "always",
   });
 
   const effectiveHeatmap = useMemo(() => {
-    return hasHeatmapData
-      ? (profile?.studentProfile?.activityHeatmap ?? {})
-      : (heatmapData?.data ?? {});
-  }, [profile, heatmapData, hasHeatmapData]);
+    if (!profile?.id) return {};
+    const fromApi =
+      heatmapQueryStatus === "success" ? (heatmapData?.data ?? {}) : {};
+    // Merge embedded (synced platforms in DB) + API (DB + RankRoom submissions); both can be partial.
+    if (heatmapQueryStatus === "success") {
+      return mergeActivityHeatmaps(embeddedHeatmap, fromApi);
+    }
+    return embeddedHeatmap;
+  }, [profile?.id, heatmapQueryStatus, heatmapData?.data, embeddedHeatmap]);
 
   useEffect(() => {
     if (!profile || !isOwner || hasAutoSyncAttempted || syncMutation.isPending) {
       return;
     }
 
-    const shouldBackfillHeatmap =
-      !hasHeatmapData &&
+    const hasPlatformHandles =
+      Boolean(profile.studentProfile.githubUsername?.trim()) ||
+      Boolean(profile.studentProfile.leetcodeUsername?.trim());
+
+    const heatmapEmpty =
+      Object.keys(profile.studentProfile.activityHeatmap ?? {}).length === 0;
+
+    const shouldTriggerSync =
+      heatmapEmpty &&
       (profile.studentProfile.githubContributions > 0 ||
         profile.studentProfile.leetcodeSolved > 0 ||
-        (profile.leaderboard?.problemsSolved ?? 0) > 0);
+        (profile.leaderboard?.problemsSolved ?? 0) > 0 ||
+        hasPlatformHandles);
 
-    if (!shouldBackfillHeatmap) return;
+    if (!shouldTriggerSync) return;
 
     setHasAutoSyncAttempted(true);
     syncMutation.mutate("all");
-  }, [
-    profile,
-    isOwner,
-    hasAutoSyncAttempted,
-    hasHeatmapData,
-    syncMutation.isPending,
-  ]);
+  }, [profile, isOwner, hasAutoSyncAttempted, syncMutation.isPending]);
 
-  const availableYears = useMemo(() => {
-    const keys = Object.keys(effectiveHeatmap);
-    if (keys.length === 0) return [new Date().getFullYear()];
-    const years = keys.map((date) => Number.parseInt(date.slice(0, 4), 10));
-    return [...new Set(years)].sort((left, right) => right - left);
-  }, [effectiveHeatmap]);
+  const availableYears = useMemo(
+    () => buildHeatmapYearOptions(effectiveHeatmap, 14),
+    [effectiveHeatmap]
+  );
 
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const defaultedHeatmapYearProfileId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!profile?.id || Object.keys(effectiveHeatmap).length === 0) return;
+    if (defaultedHeatmapYearProfileId.current === profile.id) return;
+    defaultedHeatmapYearProfileId.current = profile.id;
+    setSelectedYear(availableYears[0] ?? new Date().getFullYear());
+  }, [profile?.id, effectiveHeatmap, availableYears]);
 
   useEffect(() => {
     if (availableYears.length > 0 && !availableYears.includes(selectedYear)) {
       setSelectedYear(availableYears[0]!);
     }
-  }, [availableYears]);
+  }, [availableYears, selectedYear]);
 
   const leetcodeData = useMemo(() => {
     if (!profile) return [];

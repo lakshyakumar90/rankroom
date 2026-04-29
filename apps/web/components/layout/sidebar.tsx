@@ -85,6 +85,7 @@ const NAV_BY_ROLE: Record<Role, NavGroup[]> = {
       items: [
         { href: "/sections", label: "My Sections", icon: Shield },
         { href: "/attendance/take", label: "Take Attendance", icon: ClipboardList },
+        { href: "/attendance", label: "Attendance", icon: ClipboardList },
         { href: "/grades", label: "Grades", icon: GraduationCap },
         { href: "/assignments", label: "Assignments", icon: BookOpen },
         { href: "/analytics", label: "Subject Analytics", icon: BarChart3 },

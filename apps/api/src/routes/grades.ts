@@ -15,6 +15,13 @@ import { z } from "zod";
 const router: ExpressRouter = Router();
 router.use(authenticate);
 
+const EXAM_MAX_MARKS: Record<"MID" | "FINAL" | "INTERNAL" | "ASSIGNMENT", number> = {
+  MID: 25,
+  FINAL: 50,
+  ASSIGNMENT: 15,
+  INTERNAL: 10,
+};
+
 const updateGradeSchema = z
   .object({
     marks: z.number().min(0).optional(),
@@ -174,13 +181,14 @@ router.post("/", validate(createGradeSchema), async (req, res, next) => {
 
 router.post("/bulk", validate(bulkCreateGradesSchema), async (req, res, next) => {
   try {
-    const { subjectId, examType, maxMarks, semester, grades } = req.body as {
+    const { subjectId, examType, semester, grades } = req.body as {
       subjectId: string;
       examType: "MID" | "FINAL" | "INTERNAL" | "ASSIGNMENT";
       maxMarks: number;
       semester: number;
       grades: { studentId: string; marks: number; remarks?: string }[];
     };
+    const maxMarks = EXAM_MAX_MARKS[examType];
 
     const subject = await ensureSubjectGradeAccess(req.user!, subjectId);
     await ensureStudentsInSection(grades.map((entry) => entry.studentId), subject.sectionId);

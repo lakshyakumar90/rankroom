@@ -12,7 +12,6 @@ import Link from "next/link";
 import { ArrowLeft, CheckCircle2 } from "lucide-react";
 
 interface ContestProblem {
-  id: string;
   contestId: string;
   problemId: string;
   order: number;
@@ -75,7 +74,7 @@ export default function ContestProblemsPage({
 
             return (
               <Link
-                key={cp.id}
+                key={`${cp.contestId}:${cp.problemId}`}
                 href={`/problems/${cp.problem.slug}?contestId=${id}`}
               >
                 <Card className="cursor-pointer hover:border-primary/30 transition-colors">
@@ -95,8 +94,8 @@ export default function ContestProblemsPage({
                         </Badge>
                       </div>
                       <div className="mt-1 flex flex-wrap gap-1">
-                        {cp.problem.tags.slice(0, 3).map((t) => (
-                          <Badge key={t} variant="outline" className="text-xs">
+                        {cp.problem.tags.slice(0, 3).map((t, index) => (
+                          <Badge key={`${cp.problemId}:${t}:${index}`} variant="outline" className="text-xs">
                             {t}
                           </Badge>
                         ))}

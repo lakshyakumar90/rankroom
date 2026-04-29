@@ -3,6 +3,7 @@ import { RegistrationStatus } from "@repo/database";
 import { AppError } from "../middleware/error";
 import type { JWTPayload } from "@repo/types";
 import { Role } from "@repo/types";
+import { computeHackathonEligibility, syncHackathonStatuses } from "./hackathon.service";
 
 // ─── Registration projection ──────────────────────────────────────────────────
 
@@ -77,6 +78,8 @@ export async function getHackathonRegistrationState(
   hackathonId: string,
   userId: string
 ): Promise<RegistrationState> {
+  await syncHackathonStatuses();
+
   const registration = await prisma.hackathonRegistration.findFirst({
     where: { hackathonId, studentId: userId },
     select: { isEligible: true, registeredAt: true },
@@ -250,6 +253,8 @@ export async function buildContestViewerPayload(contestId: string, viewer: JWTPa
 // ─── Build viewer-aware hackathon payload ─────────────────────────────────────
 
 export async function buildHackathonViewerPayload(hackathonId: string, viewer: JWTPayload) {
+  await syncHackathonStatuses();
+
   const isStaff = [Role.ADMIN, Role.SUPER_ADMIN, Role.DEPARTMENT_HEAD, Role.CLASS_COORDINATOR, Role.TEACHER].includes(viewer.role);
 
   const hackathon = await prisma.hackathon.findUnique({
@@ -275,6 +280,11 @@ export async function buildHackathonViewerPayload(hackathonId: string, viewer: J
 
   const registrationState = await getHackathonRegistrationState(hackathonId, viewer.id);
 
+  const eligibility =
+    viewer.role === Role.STUDENT
+      ? await computeHackathonEligibility(hackathonId, viewer.id)
+      : undefined;
+
   return {
     ...hackathon,
     registrations: isStaff ? hackathon.registrations : undefined,
@@ -285,6 +295,7 @@ export async function buildHackathonViewerPayload(hackathonId: string, viewer: J
       ownTeam: null,
       isStaff,
     },
+    eligibility,
   };
 }
 

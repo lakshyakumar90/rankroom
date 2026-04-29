@@ -17,6 +17,7 @@ import {
   getDefaultRouteForRole,
   isAuthRoute,
   isProtectedRoute,
+  normalizeInternalPath,
 } from "@/lib/route-access";
 import type { AuthUser } from "@/store/auth";
 
@@ -96,8 +97,15 @@ function AuthInitializer() {
     const currentSearch = searchParams.toString();
     const redirectedFrom = searchParams.get("redirectedFrom");
 
-    if (user && isAuthRoute(pathname) && !redirectedFrom) {
-      router.replace(getDefaultRouteForRole(user.role));
+    if (user && isAuthRoute(pathname)) {
+      const requestedTarget = normalizeInternalPath(redirectedFrom);
+      const defaultTarget = getDefaultRouteForRole(user.role);
+      const targetRoute =
+        redirectedFrom && !isAuthRoute(requestedTarget) && canAccessRoute(requestedTarget, user.role)
+          ? requestedTarget
+          : defaultTarget;
+
+      router.replace(targetRoute);
       return;
     }
 
