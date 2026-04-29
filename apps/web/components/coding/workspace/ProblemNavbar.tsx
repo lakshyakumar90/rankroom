@@ -35,6 +35,7 @@ export interface ProblemNavbarProps {
   isRunning: boolean;
   isSubmitting: boolean;
   submitDisabled: boolean;
+  practiceDisabled?: boolean;
   fontSize: number;
   onRun: () => void;
   onSubmit: () => void;
@@ -58,6 +59,7 @@ export function ProblemNavbar({
   isRunning,
   isSubmitting,
   submitDisabled,
+  practiceDisabled = false,
   fontSize,
   onRun,
   onSubmit,
@@ -180,11 +182,11 @@ export function ProblemNavbar({
           <Bot className="h-4 w-4" />
         </Button>
 
-        <Button size="sm" className="bg-green-500 text-white hover:bg-green-600" onClick={onSubmit} disabled={submitDisabled || contestContext?.hasAccepted}>
+        <Button size="sm" className="bg-green-500 text-white hover:bg-green-600" onClick={onSubmit} disabled={practiceDisabled || submitDisabled || contestContext?.hasAccepted}>
           {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-          {contestContext?.hasAccepted ? "Solved" : "Submit"}
+          {practiceDisabled ? "Students only" : contestContext?.hasAccepted ? "Solved" : "Submit"}
         </Button>
-        <Button variant="outline" size="sm" onClick={onRun} disabled={isRunning}>
+        <Button variant="outline" size="sm" onClick={onRun} disabled={practiceDisabled || isRunning}>
           {isRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}Run
         </Button>
       </div>

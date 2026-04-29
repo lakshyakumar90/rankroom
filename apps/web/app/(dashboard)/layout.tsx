@@ -10,7 +10,7 @@ import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const isProblemWorkspace = pathname.startsWith("/problems/");
+  const isProblemWorkspace = /^\/problems\/(?!create(?:\/|$))[^/]+$/.test(pathname);
 
   return (
     <Suspense fallback={null}>

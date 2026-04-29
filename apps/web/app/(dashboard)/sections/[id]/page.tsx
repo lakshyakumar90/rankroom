@@ -13,6 +13,7 @@ import type { ApiResponse } from "@repo/types";
 import { SectionOverviewTab } from "@/components/sections/SectionOverviewTab";
 import { SectionStudentsTab } from "@/components/sections/SectionStudentsTab";
 import { SectionSubjectsTab } from "@/components/sections/SectionSubjectsTab";
+import { SectionAttendanceTab } from "@/components/sections/SectionAttendanceTab";
 import { SectionContestsTab } from "@/components/sections/SectionContestsTab";
 import { SectionLeaderboardTab } from "@/components/sections/SectionLeaderboardTab";
 import { ManageCoordinatorsDialog } from "@/components/sections/ManageCoordinatorsDialog";
@@ -128,7 +129,7 @@ export default function SectionDashboardPage() {
           <SectionSubjectsTab sectionId={params.id} />
         </TabsContent>
         <TabsContent value="attendance" className="mt-6">
-          <p className="text-sm text-muted-foreground py-4">Attendance details are in the Attendance module.</p>
+          <SectionAttendanceTab sectionId={params.id} />
         </TabsContent>
         <TabsContent value="contests" className="mt-6">
           <SectionContestsTab sectionId={params.id} />

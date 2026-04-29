@@ -123,7 +123,7 @@ export function StudentPerformancePanel({
   open: boolean;
   onClose: () => void;
 }) {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["student-analytics", studentId, sectionId],
     queryFn: () =>
       api.get<ApiResponse<StudentAnalytics>>(
@@ -171,10 +171,15 @@ export function StudentPerformancePanel({
           <div className="grid gap-3 sm:grid-cols-2">
             {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20" />)}
           </div>
+        ) : isError ? (
+          <div className="flex flex-col items-center justify-center py-12 gap-2">
+            <AlertCircle className="size-8 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">Unable to load student performance right now.</p>
+          </div>
         ) : !analytics ? (
           <div className="flex flex-col items-center justify-center py-12 gap-2">
             <AlertCircle className="size-8 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">Performance data not available</p>
+            <p className="text-sm text-muted-foreground">No performance records have been captured for this student yet.</p>
           </div>
         ) : (
           <div className="space-y-4">

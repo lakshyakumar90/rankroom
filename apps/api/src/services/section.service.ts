@@ -206,12 +206,18 @@ export async function deleteSection(id: string) {
 }
 
 export async function getSectionStudents(id: string) {
-  return prisma.enrollment.findMany({
+  const enrollments = await prisma.enrollment.findMany({
     where: { sectionId: id },
     include: {
       student: {
         select: {
           ...userSelect,
+          leaderboard: {
+            select: {
+              rank: true,
+              totalPoints: true,
+            },
+          },
           studentProfile: {
             select: {
               cgpa: true,
@@ -223,6 +229,65 @@ export async function getSectionStudents(id: string) {
       },
     },
     orderBy: { student: { name: "asc" } },
+  });
+
+  const studentIds = enrollments.map((enrollment) => enrollment.studentId);
+  if (studentIds.length === 0) return [];
+
+  const [attendanceRecords, gradeAverages] = await Promise.all([
+    prisma.attendanceRecord.findMany({
+      where: {
+        studentId: { in: studentIds },
+        attendanceSession: { sectionId: id },
+      },
+      select: {
+        studentId: true,
+        status: true,
+      },
+    }),
+    prisma.grade.groupBy({
+      by: ["studentId"],
+      where: {
+        studentId: { in: studentIds },
+        subject: { sectionId: id },
+      },
+      _avg: {
+        marks: true,
+      },
+    }),
+  ]);
+
+  const attendanceByStudent = new Map<string, { attended: number; total: number }>();
+  for (const record of attendanceRecords) {
+    const current = attendanceByStudent.get(record.studentId) ?? { attended: 0, total: 0 };
+    current.total += 1;
+    if (record.status === "PRESENT" || record.status === "LATE") current.attended += 1;
+    attendanceByStudent.set(record.studentId, current);
+  }
+
+  const averageMarksByStudent = new Map(
+    gradeAverages.map((entry) => [entry.studentId, entry._avg.marks == null ? null : Number(entry._avg.marks.toFixed(1))])
+  );
+
+  return enrollments.map((enrollment) => {
+    const attendance = attendanceByStudent.get(enrollment.studentId);
+    const profile = enrollment.student.studentProfile;
+    return {
+      id: enrollment.student.id,
+      name: enrollment.student.name,
+      email: enrollment.student.email,
+      avatar: enrollment.student.avatar,
+      rollNo: null,
+      attendancePct: attendance && attendance.total > 0 ? Math.round((attendance.attended / attendance.total) * 100) : null,
+      averageMarks: averageMarksByStudent.get(enrollment.studentId) ?? null,
+      codingXP:
+        enrollment.student.leaderboard?.totalPoints ??
+        profile?.leetcodeSolved ??
+        profile?.githubContributions ??
+        null,
+      rank: enrollment.student.leaderboard?.rank ?? null,
+      studentProfile: profile,
+    };
   });
 }
 

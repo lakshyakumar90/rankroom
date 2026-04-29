@@ -8,7 +8,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { GraduationCap } from "lucide-react";
 import type { ApiResponse, Role } from "@repo/types";
 
@@ -56,6 +56,7 @@ export function ManageTeachersDialog({ sectionId }: { sectionId: string }) {
 
   const subjects = (subjectsData?.data ?? []).filter((s) => !(s as SubjectRow & { isArchived?: boolean }).isArchived);
   const teachers = teachersData?.data ?? [];
+  const teacherNameById = new Map(teachers.map((teacher) => [teacher.id, teacher.name]));
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -93,7 +94,9 @@ export function ManageTeachersDialog({ sectionId }: { sectionId: string }) {
                   onValueChange={(v) => setSelection((s) => ({ ...s, [subject.id]: v }))}
                 >
                   <SelectTrigger className="w-40">
-                    <SelectValue placeholder="Select..." />
+                    <span className="truncate">
+                      {selection[subject.id] ? teacherNameById.get(selection[subject.id]) ?? "Select..." : "Select..."}
+                    </span>
                   </SelectTrigger>
                   <SelectContent>
                     {teachers.map((t) => (

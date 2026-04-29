@@ -7,14 +7,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { type ApiResponse } from "@repo/types";
+import { Role, type ApiResponse } from "@repo/types";
 import { CheckCircle2, XCircle, Clock, Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth";
 
-interface Batch { id: string; name: string; year: number; semester: number; department: { name: string } }
+interface Batch { id: string; name: string; year?: number | null; semester: number; department: { name: string } }
 interface Enrollment { studentId: string; student: { id: string; name: string; avatar?: string | null } }
+interface SubjectOption { id: string; name: string; code: string }
 
 type AttendanceStatusType = "PRESENT" | "ABSENT" | "LATE";
 
@@ -39,7 +40,10 @@ export default function MarkAttendancePage() {
 
   const { data: subjectsData } = useQuery({
     queryKey: ["subjects", selectedBatch],
-    queryFn: () => api.get<ApiResponse<{ id: string; name: string; code: string }[]>>(`/api/subjects/batch/${selectedBatch}`),
+    queryFn: () =>
+      api.get<ApiResponse<SubjectOption[]>>(
+        `/api/sections/${selectedBatch}/subjects${user?.role === Role.TEACHER ? "?teacherId=me" : ""}`
+      ),
     enabled: !!selectedBatch,
   });
 

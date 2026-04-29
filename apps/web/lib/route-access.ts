@@ -8,7 +8,6 @@ type RouteRule = {
 
 const ROUTE_RULES: RouteRule[] = [
   { prefix: "/login", type: "auth" },
-  { prefix: "/register", type: "auth" },
   { prefix: "/forgot-password", type: "auth" },
   {
     prefix: "/admin",

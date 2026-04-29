@@ -8,8 +8,9 @@ import { api } from "@/lib/api";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CodeEditor, type CodeEditorRef } from "@repo/ui/editor/CodeEditor";
-import type { ApiResponse, TestResult } from "@repo/types";
+import { Role, type ApiResponse, type TestResult } from "@repo/types";
 import { useProblemStore } from "@/stores/problemStore";
+import { useAuthStore } from "@/store/auth";
 import { useSubmission } from "@/hooks/useSubmission";
 import { AiDrawer } from "@/components/coding/AiDrawer";
 import { ProblemWorkspace } from "@/components/coding/workspace/ProblemWorkspace";
@@ -99,6 +100,7 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
   const searchParams = useSearchParams();
   const contestId = searchParams.get("contestId");
   const queryClient = useQueryClient();
+  const user = useAuthStore((state) => state.user);
   const editorRef = useRef<CodeEditorRef>(null);
   const hydratedCodeKeyRef = useRef<string | null>(null);
   const initialLanguageHydratedRef = useRef<string | null>(null);
@@ -162,6 +164,7 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
   });
 
   const problem = data?.data;
+  const canPractice = user?.role === Role.STUDENT;
   const contestContext = problem?.contestContext ?? null;
   const history = historyData?.data ?? [];
   const problemList = problemListData?.data ?? [];
@@ -291,7 +294,7 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
   }
 
   const handleRun = useCallback(async () => {
-    if (!problem) return;
+    if (!problem || !canPractice) return;
     setRunning(true);
     setActiveBottomTab("result");
     setSubmissionResult(null);
@@ -328,10 +331,10 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
     } finally {
       setRunning(false);
     }
-  }, [activeCode, activeCustomInput, language, problem, setRunResults, setRunning, setSubmissionResult]);
+  }, [activeCode, activeCustomInput, canPractice, language, problem, setRunResults, setRunning, setSubmissionResult]);
 
   const handleSubmit = useCallback(async () => {
-    if (!problem) return;
+    if (!problem || !canPractice) return;
     setSubmitting(true);
     setRunResults(null);
     setActiveBottomTab("console");
@@ -343,7 +346,7 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
       setConsoleText(msg);
       setSubmitting(false);
     }
-  }, [activeCode, language, problem, setRunResults, setSubmitting, submitCode]);
+  }, [activeCode, canPractice, language, problem, setRunResults, setSubmitting, submitCode]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -416,6 +419,7 @@ function ProblemPageContent({ params }: { params: Promise<{ id: string }> }) {
             isRunning={isRunning}
             isSubmitting={isSubmitting}
             submitDisabled={submitDisabled}
+            practiceDisabled={!canPractice}
             fontSize={fontSize}
             onRun={() => void handleRun()}
             onSubmit={() => void handleSubmit()}

@@ -7,7 +7,7 @@ import { AppError } from "../middleware/error";
 import { updateProfileSchema } from "@repo/validators";
 import { Role, type Role as RoleType } from "@repo/types";
 import { ensureUniqueHandle } from "../lib/handles";
-import { syncSupabaseUserToDatabase } from "../lib/auth-sync";
+import { syncSupabaseUserToDatabase, UserNotProvisionedError } from "../lib/auth-sync";
 import { buildUserScope } from "../services/scope.service";
 import { logActivity } from "../lib/activity";
 import { z } from "zod";
@@ -31,6 +31,28 @@ const loginSchema = z.object({
 const refreshSchema = z.object({
   refreshToken: z.string().min(1),
 });
+
+function toSessionPayload(session: {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  expires_at?: number;
+}) {
+  return {
+    access_token: session.access_token,
+    refresh_token: session.refresh_token,
+    expires_in: session.expires_in,
+    expires_at: session.expires_at ?? Math.floor(Date.now() / 1000) + session.expires_in,
+  };
+}
+
+function normalizeAuthError(error: { message?: string; status?: number } | null | undefined) {
+  const message = error?.message?.toLowerCase() ?? "";
+  if (message.includes("invalid login credentials")) return "Invalid email or password";
+  if (message.includes("email not confirmed")) return "Please confirm your email before signing in";
+  if (message.includes("signup")) return error?.message ?? "Sign up failed";
+  return error?.message ?? "Authentication failed";
+}
 
 const fullUserInclude = {
   profile: true,
@@ -98,23 +120,6 @@ async function findAuthUserById(id: string) {
   }
 }
 
-function parseSyncRole(value: unknown): RoleType | undefined {
-  if (value === undefined || value === null) {
-    return undefined;
-  }
-
-  if (typeof value !== "string" || !Object.values(Role).includes(value as Role)) {
-    throw new AppError("Invalid role", 400);
-  }
-
-  // Public signup flow only allows student role.
-  if (value !== Role.STUDENT) {
-    throw new AppError("Invalid role", 400);
-  }
-
-  return value as RoleType;
-}
-
 async function buildAuthUserResponse(userId: string) {
   const fullUser = await findAuthUserById(userId);
   if (!fullUser) {
@@ -129,25 +134,39 @@ async function buildAuthUserResponse(userId: string) {
   return { ...fullUser, role: fullUser.role as RoleType, scope } as AuthUser;
 }
 
+async function syncProvisionedSupabaseUser(user: Parameters<typeof syncSupabaseUserToDatabase>[0]) {
+  try {
+    return await syncSupabaseUserToDatabase(user);
+  } catch (error) {
+    if (error instanceof UserNotProvisionedError) {
+      throw new AppError(error.message, 403);
+    }
+
+    throw error;
+  }
+}
+
 router.post("/login", validate(loginSchema), async (req, res, next) => {
   try {
     const { email, password } = req.body as z.infer<typeof loginSchema>;
     const { data, error } = await passwordAuthClient.auth.signInWithPassword({ email, password });
     if (error || !data.session || !data.user) {
-      throw new AppError("Invalid email or password", 401);
+      throw new AppError(normalizeAuthError(error), error?.status === 400 ? 401 : error?.status ?? 401);
     }
 
-    const syncedUser = await syncSupabaseUserToDatabase(data.user);
+    const syncedUser = await syncProvisionedSupabaseUser(data.user);
     const authUser = await buildAuthUserResponse(syncedUser.id);
     void logActivity(syncedUser.id, "auth.login");
+    const session = toSessionPayload(data.session);
 
     res.json({
       success: true,
-      accessToken: data.session.access_token,
-      refreshToken: data.session.refresh_token,
+      accessToken: session.access_token,
+      refreshToken: session.refresh_token,
       data: {
-        accessToken: data.session.access_token,
-        refreshToken: data.session.refresh_token,
+        accessToken: session.access_token,
+        refreshToken: session.refresh_token,
+        session,
         user: authUser,
       },
     });
@@ -164,16 +183,18 @@ router.post("/refresh", validate(refreshSchema), async (req, res, next) => {
       throw new AppError("Invalid refresh token", 401);
     }
 
-    const syncedUser = await syncSupabaseUserToDatabase(data.user);
+    const syncedUser = await syncProvisionedSupabaseUser(data.user);
     const authUser = await buildAuthUserResponse(syncedUser.id);
+    const session = toSessionPayload(data.session);
 
     res.json({
       success: true,
-      accessToken: data.session.access_token,
-      refreshToken: data.session.refresh_token,
+      accessToken: session.access_token,
+      refreshToken: session.refresh_token,
       data: {
-        accessToken: data.session.access_token,
-        refreshToken: data.session.refresh_token,
+        accessToken: session.access_token,
+        refreshToken: session.refresh_token,
+        session,
         user: authUser,
       },
     });
@@ -239,17 +260,15 @@ router.post("/sync", async (req, res, next) => {
       throw new AppError("Invalid or expired token", 401);
     }
 
-    const body = (req.body ?? {}) as { name?: unknown; role?: unknown };
+    const body = (req.body ?? {}) as { name?: unknown };
     const name = typeof body.name === "string" ? body.name.trim() : undefined;
-    const role = parseSyncRole(body.role);
 
     const mergedMetadata = {
       ...(supabaseUser.user_metadata ?? {}),
       ...(name ? { name, full_name: name } : {}),
-      ...(role ? { role } : {}),
     };
 
-    const syncedUser = await syncSupabaseUserToDatabase({
+    const syncedUser = await syncProvisionedSupabaseUser({
       ...supabaseUser,
       user_metadata: mergedMetadata,
     });
@@ -257,6 +276,10 @@ router.post("/sync", async (req, res, next) => {
     const fullUser = await findAuthUserById(syncedUser.id);
     if (!fullUser) {
       throw new AppError("Failed to sync user", 500);
+    }
+
+    if (!fullUser.isActive) {
+      throw new AppError("Account is deactivated", 401);
     }
 
     const scope = await buildUserScope(fullUser.id, fullUser.role as RoleType);

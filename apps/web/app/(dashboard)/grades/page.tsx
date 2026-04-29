@@ -50,6 +50,14 @@ interface CgpaData {
     totalObtained: number; totalMax: number; percentage: number; cgpaPoints: number;
   }>;
 }
+interface TeachingAssignment { subject: { id: string; name: string; code: string }; section: { id: string } }
+
+const EMPTY_CLASSES: BatchOption[] = [];
+const EMPTY_SUBJECTS: SubjectOption[] = [];
+const EMPTY_ENROLLMENTS: Enrollment[] = [];
+const EMPTY_GRADES: GradeWithSubject[] = [];
+const EMPTY_EXISTING_GRADES: (Grade & { student: { id: string; name: string } })[] = [];
+const EMPTY_ASSIGNMENTS: TeachingAssignment[] = [];
 
 // ─── CGPA Ring ────────────────────────────────────────────────────────────────
 function CgpaRing({ cgpa }: { cgpa: number }) {
@@ -113,7 +121,6 @@ export default function GradesPage() {
   });
 
   // For teachers: fetch only their assigned subjects; for CC/admin/dept-head: all subjects in the section
-  interface TeachingAssignment { subject: { id: string; name: string; code: string }; section: { id: string } }
   const { data: teachingAssignmentsData } = useQuery({
     queryKey: ["teaching-assignments"],
     queryFn: () => api.get<ApiResponse<TeachingAssignment[]>>("/api/profile/teaching-assignments"),
@@ -122,18 +129,18 @@ export default function GradesPage() {
 
   const { data: subjectsData } = useQuery({
     queryKey: ["subjects", selectedBatch, "grades"],
-    queryFn: () => api.get<ApiResponse<SubjectOption[]>>(`/api/subjects/batch/${selectedBatch}`),
+    queryFn: () => api.get<ApiResponse<SubjectOption[]>>(`/api/sections/${selectedBatch}/subjects`),
     enabled: !!user && isStaff && !!selectedBatch && !isTeacher,
   });
 
   // For teachers: derive subjects from their assignments filtered by selected batch/section
   const teacherSubjectsForBatch = useMemo(() => {
     if (!isTeacher || !selectedBatch) return [];
-    const assignments = teachingAssignmentsData?.data ?? [];
+    const assignments = teachingAssignmentsData?.data ?? EMPTY_ASSIGNMENTS;
     return assignments
       .filter((a) => a.section.id === selectedBatch)
       .map((a) => a.subject);
-  }, [isTeacher, selectedBatch, teachingAssignmentsData]);
+  }, [isTeacher, selectedBatch, teachingAssignmentsData?.data]);
 
   const { data: enrollmentsData, isLoading: enrollmentsLoading } = useQuery({
     queryKey: ["grade-roster", selectedBatch],
@@ -186,12 +193,12 @@ export default function GradesPage() {
     onError: (error: Error) => toast.error(error.message || "Failed to save grades"),
   });
 
-  const grades = data?.data ?? [];
-  const classes = classesData?.data ?? [];
+  const grades = data?.data ?? EMPTY_GRADES;
+  const classes = classesData?.data ?? EMPTY_CLASSES;
   // Teachers see only their assigned subjects for the selected section; others see all
-  const subjects = isTeacher ? teacherSubjectsForBatch : (subjectsData?.data ?? []);
-  const roster = enrollmentsData?.data ?? [];
-  const existingGrades = existingGradesData?.data ?? [];
+  const subjects = isTeacher ? teacherSubjectsForBatch : (subjectsData?.data ?? EMPTY_SUBJECTS);
+  const roster = enrollmentsData?.data ?? EMPTY_ENROLLMENTS;
+  const existingGrades = existingGradesData?.data ?? EMPTY_EXISTING_GRADES;
   const cgpa = cgpaData?.data;
 
   useEffect(() => {
@@ -212,13 +219,13 @@ export default function GradesPage() {
       }
     });
 
-    if (existingGrades.length > 0 || roster.length > 0) {
+    if (selectedBatch && selectedSubject && (existingGrades.length > 0 || roster.length > 0)) {
       setMarks(nextMarks);
       setRemarks(nextRemarks);
       const existingMax = existingGrades[0]?.maxMarks;
       if (existingMax) setMaxMarks(existingMax);
     }
-  }, [existingGrades, roster]);
+  }, [existingGrades, roster, selectedBatch, selectedSubject]);
 
   const gradesBySubject = grades.reduce<Record<string, { name: string; code: string; grades: typeof grades }>>((acc, g) => {
     const key = g.subjectId;

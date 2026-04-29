@@ -86,12 +86,21 @@ router.get("/student/:studentId", async (req, res, next) => {
 
     if (!student) throw new AppError("Student not found", 404);
 
+    if (sectionId && !(await canAccessSection(viewer, sectionId))) {
+      throw new AppError("Forbidden", 403);
+    }
+
     // Attendance summary (all sections or specific section)
     const attendanceWhere = sectionId
-      ? { studentId, sectionId }
+      ? { studentId, attendanceSession: { sectionId } }
       : { studentId };
 
-    const [attendanceRecords, grades, recentSubmissions] = await Promise.all([
+    const skillGraphPromise = getStudentSkillAnalyticsForViewer(viewer, studentId).catch((error) => {
+      console.error("Student skill analytics unavailable", { studentId, error });
+      return null;
+    });
+
+    const [attendanceRecords, grades, recentSubmissions, skillGraph] = await Promise.all([
       prisma.attendanceRecord.findMany({
         where: attendanceWhere,
         select: { status: true },
@@ -107,6 +116,7 @@ router.get("/student/:studentId", async (req, res, next) => {
         orderBy: { createdAt: "desc" },
         take: 10,
       }),
+      skillGraphPromise,
     ]);
 
     // Build attendance summary
@@ -148,7 +158,7 @@ router.get("/student/:studentId", async (req, res, next) => {
               }
             : null,
         },
-        skillGraph: await getStudentSkillAnalyticsForViewer(viewer, studentId),
+        skillGraph,
         attendance: total > 0 ? { present, absent, late, percentage: Math.round(percentage * 10) / 10 } : undefined,
         grades: gradesSummary,
         recentSubmissions: recentSubmissions.map((s) => ({

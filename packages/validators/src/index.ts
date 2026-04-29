@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const cuid = () => z.string().cuid();
+const optionalCuid = () => z.preprocess((value) => (value === "" ? undefined : value), cuid().optional());
 
 export const roleSchema = z.enum([
   "SUPER_ADMIN",
@@ -14,13 +15,6 @@ export const roleSchema = z.enum([
 export const paginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
-});
-
-export const registerSchema = z.object({
-  email: z.string().email("Invalid email address"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
-  name: z.string().min(2).max(100),
-  role: z.literal("STUDENT").default("STUDENT"),
 });
 
 export const loginSchema = z.object({
@@ -121,8 +115,8 @@ export const createUserSchema = z.object({
   name: z.string().min(2).max(100),
   role: roleSchema,
   password: z.string().min(8),
-  departmentId: cuid().optional(),
-  sectionId: cuid().optional(),
+  departmentId: optionalCuid(),
+  sectionId: optionalCuid(),
   subjectIds: z.array(cuid()).optional(),
   sectionIds: z.array(cuid()).optional(),
 });

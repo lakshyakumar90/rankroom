@@ -3,10 +3,13 @@
 import Link from "next/link";
 import { startTransition, Suspense, useDeferredValue, useMemo } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import { CheckCircle2, FileQuestion, Lock, MinusCircle, Search } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CheckCircle2, FileQuestion, Lock, MinusCircle, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { hasPermission } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/store/auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,8 +53,10 @@ function ProblemSkeletonRows() {
 
 function ProblemsPageContent() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const user = useAuthStore((state) => state.user);
 
   const page = searchParams.get("page") ?? "1";
   const search = searchParams.get("search") ?? "";
@@ -94,6 +99,19 @@ function ProblemsPageContent() {
 
   const problems = data?.data ?? [];
   const pagination = data?.pagination;
+  const canCreateProblems = user ? hasPermission(user.role, "problems:create") : false;
+  const canManageAnyProblem = user?.role === "ADMIN" || user?.role === "SUPER_ADMIN";
+  const canManageProblem = (problem: ProblemRow) =>
+    canCreateProblems && (canManageAnyProblem || problem.createdBy?.id === user?.id);
+  const deleteMutation = useMutation({
+    mutationFn: (problemId: string) => api.delete(`/api/problems/${problemId}`),
+    onSuccess: () => {
+      toast.success("Problem deleted");
+      void queryClient.invalidateQueries({ queryKey: ["problems"] });
+      void queryClient.invalidateQueries({ queryKey: ["problem-tags"] });
+    },
+    onError: (error: Error) => toast.error(error.message || "Failed to delete problem"),
+  });
   const topics = useMemo(
     () => Array.from(new Set((tagPoolData?.data ?? []).flatMap((problem) => problem.tags))).sort((a, b) => a.localeCompare(b)),
     [tagPoolData?.data]
@@ -109,6 +127,15 @@ function ProblemsPageContent() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            {canCreateProblems ? (
+              <Button asChild>
+                <Link href="/problems/create">
+                  <Plus className="mr-2 size-4" />
+                  Add problem
+                </Link>
+              </Button>
+            ) : null}
+
             <div className="relative w-64">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={(event) => setParam({ search: event.target.value || null })} placeholder="Search problems..." className="pl-9" />
@@ -239,7 +266,39 @@ function ProblemsPageContent() {
                     <TableCell className="text-sm text-muted-foreground">{problem.createdBy?.name ?? "System"}</TableCell>
                     <TableCell><ScopeBadge scope={problem.scope} /></TableCell>
                     <TableCell className="text-right text-sm text-muted-foreground">{(problem.acceptanceRate ?? 0).toFixed(1)}%</TableCell>
-                    <TableCell className="text-right"><Lock className="ml-auto h-4 w-4 text-muted-foreground" /></TableCell>
+                    <TableCell className="text-right">
+                      {canManageProblem(problem) ? (
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              router.push(`/problems/${problem.id}/edit`);
+                            }}
+                            title="Edit problem"
+                          >
+                            <Pencil className="size-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (window.confirm(`Delete "${problem.title}"? This cannot be undone.`)) {
+                                deleteMutation.mutate(problem.id);
+                              }
+                            }}
+                            disabled={deleteMutation.isPending}
+                            title="Delete problem"
+                          >
+                            <Trash2 className="size-4 text-destructive" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <Lock className="ml-auto h-4 w-4 text-muted-foreground" />
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))
               )}

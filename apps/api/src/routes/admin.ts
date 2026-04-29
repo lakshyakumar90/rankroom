@@ -90,6 +90,25 @@ async function getSectionDepartmentLabel(sectionId: string | undefined) {
   });
 }
 
+async function findSupabaseAuthUserByEmail(email: string) {
+  const normalizedEmail = email.toLowerCase();
+  let page = 1;
+
+  while (true) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 });
+    if (error) {
+      throw new AppError(error.message, 400);
+    }
+
+    const user = data.users.find((entry) => entry.email?.toLowerCase() === normalizedEmail);
+    if (user || data.users.length < 200) {
+      return user ?? null;
+    }
+
+    page += 1;
+  }
+}
+
 router.get("/users", async (req, res, next) => {
   try {
     const { page = "1", limit = "20", role, search } = req.query as Record<string, string>;
@@ -128,6 +147,8 @@ router.get("/users", async (req, res, next) => {
 });
 
 router.post("/users", validate(createUserSchema), async (req, res, next) => {
+  let createdAuthUserId: string | null = null;
+
   try {
     const { email, name, role, password, sectionId, subjectIds, departmentId } = req.body as {
       email: string;
@@ -139,73 +160,132 @@ router.post("/users", validate(createUserSchema), async (req, res, next) => {
       departmentId?: string;
     };
 
-    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: { name, full_name: name, role },
+    const existingDbUser = await prisma.user.findUnique({
+      where: { email },
+      select: { id: true },
     });
 
-    if (authError || !authData.user) {
-      throw new AppError(authError?.message ?? "Failed to create auth user", 400);
+    if (existingDbUser) {
+      throw new AppError("A user with this email already exists", 409);
+    }
+
+    if ([Role.STUDENT, Role.TEACHER, Role.CLASS_COORDINATOR].includes(role) && !sectionId) {
+      throw new AppError("Section is required for this role", 400);
+    }
+
+    if (role === Role.DEPARTMENT_HEAD && !departmentId) {
+      throw new AppError("Department is required for department heads", 400);
     }
 
     const section = await getSectionDepartmentLabel(sectionId);
+    if (sectionId && !section) {
+      throw new AppError("Section not found", 404);
+    }
+
     const profileDepartmentLabel = section?.department.name ?? null;
+    const existingAuthUser = await findSupabaseAuthUserByEmail(email);
+    const authUserId = existingAuthUser?.id;
+
+    const authData = authUserId
+      ? await supabase.auth.admin.updateUserById(authUserId, {
+          email,
+          password,
+          email_confirm: true,
+          user_metadata: {
+            ...(existingAuthUser.user_metadata ?? {}),
+            name,
+            full_name: name,
+            role,
+          },
+        })
+      : await supabase.auth.admin.createUser({
+          email,
+          password,
+          email_confirm: true,
+          user_metadata: { name, full_name: name, role },
+        });
+
+    if (authData.error || !authData.data.user) {
+      throw new AppError(authData.error?.message ?? "Failed to create auth user", 400);
+    }
+
+    createdAuthUserId = authUserId ? null : authData.data.user.id;
 
     const handle = await ensureUniqueHandle(name);
-    const user = await prisma.user.create({
-      data: {
-        supabaseId: authData.user.id,
-        email,
-        name,
-        role,
-        isVerified: true,
-        profile: {
-          create: {
-            handle,
-            department: profileDepartmentLabel,
-            skills: [],
+    const user = await prisma.$transaction(async (tx) => {
+      const createdUser = await tx.user.create({
+        data: {
+          supabaseId: authData.data.user.id,
+          email,
+          name,
+          role,
+          isVerified: true,
+          profile: {
+            create: {
+              handle,
+              department: profileDepartmentLabel,
+              skills: [],
+            },
           },
+          ...(role === Role.STUDENT ? { leaderboard: { create: {} }, studentProfile: { create: {} } } : {}),
         },
-        ...(role === Role.STUDENT ? { leaderboard: { create: {} }, studentProfile: { create: {} } } : {}),
-      },
-      include: { profile: true, studentProfile: true },
+        include: { profile: true, studentProfile: true },
+      });
+
+      if (role === Role.STUDENT && sectionId) {
+        await tx.enrollment.create({
+          data: { studentId: createdUser.id, sectionId },
+        });
+      }
+
+      if (role === Role.DEPARTMENT_HEAD && departmentId) {
+        await tx.department.update({
+          where: { id: departmentId },
+          data: { headId: createdUser.id },
+        });
+      }
+
+      if ((role === Role.TEACHER || role === Role.CLASS_COORDINATOR) && sectionId && subjectIds?.length) {
+        await tx.teacherSubjectAssignment.createMany({
+          data: subjectIds.map((subjectId) => ({
+            teacherId: createdUser.id,
+            subjectId,
+            sectionId,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      if (role === Role.CLASS_COORDINATOR && sectionId) {
+        await tx.section.update({
+          where: { id: sectionId },
+          data: { coordinatorId: createdUser.id },
+        });
+      }
+
+      return createdUser;
     });
 
-    if (role === Role.STUDENT && sectionId) {
-      await prisma.enrollment.create({
-        data: { studentId: user.id, sectionId },
-      });
-    }
+    createdAuthUserId = null;
 
-    if (role === Role.DEPARTMENT_HEAD && departmentId) {
-      await prisma.department.update({
-        where: { id: departmentId },
-        data: { headId: user.id },
-      });
-    }
-
-    if ((role === Role.TEACHER || role === Role.CLASS_COORDINATOR) && sectionId && subjectIds?.length) {
-      await prisma.teacherSubjectAssignment.createMany({
-        data: subjectIds.map((subjectId) => ({
-          teacherId: user.id,
-          subjectId,
-          sectionId,
-        })),
-        skipDuplicates: true,
-      });
-    }
-
-    if (role === Role.CLASS_COORDINATOR && sectionId) {
-      await prisma.section.update({
-        where: { id: sectionId },
-        data: { coordinatorId: user.id },
-      });
-    }
+    await logActivity(req.user!.id, "admin.user.created", {
+      targetUserId: user.id,
+      role,
+    });
 
     res.status(201).json({ success: true, data: user });
   } catch (error) {
+    if (createdAuthUserId) {
+      await supabase.auth.admin.deleteUser(createdAuthUserId).catch((cleanupError) => {
+        console.error("Failed to clean up auth user after provisioning error:", cleanupError);
+      });
+    }
+
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      next(new AppError("A user with this email already exists", 409));
+      return;
+    }
+
     next(error);
   }
 });

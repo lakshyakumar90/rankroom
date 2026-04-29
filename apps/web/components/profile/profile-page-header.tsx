@@ -121,9 +121,7 @@ export function ProfilePageHeader({ username }: { username?: string }) {
                 <Button variant="ghost" asChild>
                   <Link href="/login">Log in</Link>
                 </Button>
-                <Button asChild>
-                  <Link href="/register">Sign up</Link>
-                </Button>
+                <span className="hidden text-sm text-muted-foreground sm:inline">Admin-created accounts only</span>
               </div>
             )}
           </div>
@@ -167,11 +165,7 @@ export function ProfilePageHeader({ username }: { username?: string }) {
                       Log in
                     </Link>
                   </Button>
-                  <Button asChild>
-                    <Link href="/register" onClick={() => setMobileOpen(false)}>
-                      Sign up
-                    </Link>
-                  </Button>
+                  <p className="px-3 text-center text-sm text-muted-foreground">Ask your administrator to create an account.</p>
                 </div>
               )}
             </nav>

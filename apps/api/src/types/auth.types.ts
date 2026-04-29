@@ -9,13 +9,6 @@ export interface LoginRequest {
   password: string;
 }
 
-export interface SignupRequest {
-  email: string;
-  password: string;
-  name: string;
-  role?: Role;
-}
-
 export interface LogoutRequest {
   // No body - token from Authorization header
 }
@@ -143,20 +136,6 @@ export interface LoginResponse {
       expires_in: number;
       expires_at: number;
     };
-  };
-}
-
-export interface SignupResponse {
-  success: true;
-  data: {
-    user: AuthUser;
-    session: {
-      access_token: string;
-      refresh_token: string;
-      expires_in: number;
-      expires_at: number;
-    } | null; // null if email confirmation required
-    emailConfirmationRequired: boolean;
   };
 }
 

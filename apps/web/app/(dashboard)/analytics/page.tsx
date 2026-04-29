@@ -123,8 +123,11 @@ function PlatformView({ data }: { data: Record<string, unknown> }) {
     student?: { name?: string; role?: string };
     name?: string;
     role?: string;
-    totalPoints: number;
-    problemsSolved: number;
+    totalPoints?: number;
+    totalScore?: number;
+    problemsSolved?: number;
+    studentId?: string;
+    studentProfile?: unknown;
   }>) ?? [];
   return (
     <div className="space-y-6">
@@ -141,8 +144,11 @@ function PlatformView({ data }: { data: Record<string, unknown> }) {
           <CardHeader className="pb-3"><CardTitle className="flex items-center gap-2 text-base"><Award className="size-4 text-amber-500" />Top 10 Leaderboard</CardTitle></CardHeader>
           <CardContent className="p-0">
             <div className="divide-y divide-border/60">
-              {topLb.map((entry, i) => (
-                <div key={i} className="flex items-center justify-between px-5 py-3">
+              {topLb.map((entry, i) => {
+                const points = Number(entry.totalPoints ?? entry.totalScore ?? 0);
+                const solved = Number(entry.problemsSolved ?? 0);
+                return (
+                <div key={entry.studentId ?? i} className="flex items-center justify-between px-5 py-3">
                   <div className="flex items-center gap-3">
                     <span className={`flex size-7 items-center justify-center rounded-full text-xs font-bold ${i === 0 ? "bg-amber-500 text-white" : i === 1 ? "bg-zinc-400 text-white" : i === 2 ? "bg-amber-700 text-white" : "bg-muted text-muted-foreground"}`}>{i + 1}</span>
                     <div>
@@ -151,11 +157,12 @@ function PlatformView({ data }: { data: Record<string, unknown> }) {
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-sm font-semibold">{entry.totalPoints} pts</p>
-                    <p className="text-xs text-muted-foreground">{entry.problemsSolved} solved</p>
+                    <p className="text-sm font-semibold">{points.toFixed(points % 1 === 0 ? 0 : 2)} pts</p>
+                    <p className="text-xs text-muted-foreground">{solved} solved</p>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </CardContent>
         </Card>

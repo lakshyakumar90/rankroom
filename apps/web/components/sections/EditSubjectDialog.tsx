@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import type { ApiResponse } from "@repo/types";
 
 interface Subject {
@@ -31,6 +31,8 @@ interface Teacher {
   name: string;
   email: string;
 }
+
+type SectionTeacherResponse = Teacher | { teacher: Teacher };
 
 interface EditSubjectDialogProps {
   subject: Subject;
@@ -54,18 +56,31 @@ export function EditSubjectDialog({ subject, sectionId, open, onClose }: EditSub
 
   const { data: teachersData } = useQuery({
     queryKey: ["section", sectionId, "teachers"],
-    queryFn: () => api.get<ApiResponse<Teacher[]>>(`/api/sections/${sectionId}/teachers`),
+    queryFn: () => api.get<ApiResponse<SectionTeacherResponse[]>>(`/api/sections/${sectionId}/teachers`),
     enabled: open,
   });
 
-  const teachers = teachersData?.data ?? [];
+  const teachers = Array.from(
+    new Map(
+      (teachersData?.data ?? []).map((entry) => {
+        const teacher = "teacher" in entry ? entry.teacher : entry;
+        return [teacher.id, teacher] as const;
+      })
+    ).values()
+  );
+  const selectedTeacherName =
+    form.teacherId === "none" || !form.teacherId
+      ? "Unassigned"
+      : teachers.find((teacher) => teacher.id === form.teacherId)?.name ??
+        subject.teacherAssignments.find((assignment) => assignment.teacher.id === form.teacherId)?.teacher.name ??
+        "Select teacher...";
 
   const mutation = useMutation({
     mutationFn: () =>
       api.patch(`/api/subjects/${subject.id}`, {
         name: form.name,
         code: form.code,
-        teacherId: form.teacherId || null,
+        teacherId: form.teacherId && form.teacherId !== "none" ? form.teacherId : null,
         resultConfig: {
           maxMidTerm: form.maxMidTerm,
           maxEndTerm: form.maxEndTerm,
@@ -116,7 +131,7 @@ export function EditSubjectDialog({ subject, sectionId, open, onClose }: EditSub
               onValueChange={(v) => setForm((f) => ({ ...f, teacherId: v }))}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Select teacher..." />
+                <span className="truncate">{selectedTeacherName}</span>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">— Unassigned —</SelectItem>

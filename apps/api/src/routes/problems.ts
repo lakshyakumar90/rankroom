@@ -57,11 +57,54 @@ const submitSchema = z.object({
   language: z.string().min(1),
 });
 
+const updateProblemSchema = z.object({
+  title: z.string().min(3).max(200).optional(),
+  slug: z
+    .string()
+    .min(3)
+    .max(200)
+    .regex(/^[a-z0-9-]+$/, "Slug must be lowercase letters, numbers and hyphens only")
+    .optional(),
+  description: z.string().min(10).optional(),
+  difficulty: z.enum(["EASY", "MEDIUM", "HARD"]).optional(),
+  tags: z.array(z.string()).max(10).optional(),
+  scope: z.enum(["GLOBAL", "DEPARTMENT", "SECTION"]).optional(),
+  scopeDepartmentId: z.string().cuid().optional().nullable(),
+  scopeSectionId: z.string().cuid().optional().nullable(),
+  constraints: z.string().optional().nullable(),
+  inputFormat: z.string().optional().nullable(),
+  outputFormat: z.string().optional().nullable(),
+  sampleInput: z.string().optional().nullable(),
+  sampleOutput: z.string().optional().nullable(),
+  starterCode: z.record(z.string(), z.string()).optional(),
+  boilerplates: z.array(z.object({ language: z.string().min(1).max(50), code: z.string().min(1) })).optional(),
+  compareMode: z.enum(["EXACT", "UNORDERED", "FLOAT_TOLERANCE", "IGNORE_TRAILING_WHITESPACE"]).optional(),
+  timeLimitMs: z.number().int().min(100).max(30000).optional(),
+  memoryLimitKb: z.number().int().min(16384).max(1048576).optional(),
+  points: z.number().int().min(1).optional(),
+  isPublished: z.boolean().optional(),
+});
+
 const ALLOWED_PROBLEM_LANGUAGES = ["python", "cpp", "c"] as const;
 const SUPPORTED_PROBLEM_LANGUAGES = [...ALLOWED_PROBLEM_LANGUAGES];
 
 function isAllowedProblemLanguage(language: string): language is (typeof ALLOWED_PROBLEM_LANGUAGES)[number] {
   return ALLOWED_PROBLEM_LANGUAGES.includes(language as (typeof ALLOWED_PROBLEM_LANGUAGES)[number]);
+}
+
+function canManageAnyProblem(role: Role) {
+  return role === Role.SUPER_ADMIN || role === Role.ADMIN;
+}
+
+async function ensureProblemMutationAccess(user: NonNullable<Express.Request["user"]>, problemId: string) {
+  const problem = await prisma.problem.findUnique({
+    where: { id: problemId },
+    select: { id: true, createdById: true },
+  });
+
+  if (!problem) throw new AppError("Problem not found", 404);
+  if (canManageAnyProblem(user.role) || problem.createdById === user.id) return problem;
+  throw new AppError("You can only modify problems you created", 403);
 }
 
 const boilerplateUpsertSchema = z.object({
@@ -220,7 +263,7 @@ router.get("/", optionalAuth, validate(problemFiltersSchema, "query"), async (re
   }
 });
 
-router.post("/:id/run", authenticate, submissionLimiter, validate(runSchema), async (req, res, next) => {
+router.post("/:id/run", authenticate, requireRole(Role.STUDENT), submissionLimiter, validate(runSchema), async (req, res, next) => {
   try {
     const { source_code, language, stdin } = req.body as { source_code: string; language: string; stdin?: string };
     if (!isAllowedProblemLanguage(language)) {
@@ -405,7 +448,7 @@ router.post("/:id/run", authenticate, submissionLimiter, validate(runSchema), as
   }
 });
 
-router.post("/:id/submit", authenticate, submissionLimiter, validate(submitSchema), async (req, res, next) => {
+router.post("/:id/submit", authenticate, requireRole(Role.STUDENT), submissionLimiter, validate(submitSchema), async (req, res, next) => {
   try {
     const { source_code, language } = req.body as { source_code: string; language: string };
     if (!isAllowedProblemLanguage(language)) {
@@ -853,9 +896,44 @@ router.post("/", authenticate, requirePermission("problems:create"), validate(cr
 });
 
 // PATCH /api/problems/:id
-router.patch("/:id", authenticate, requirePermission("problems:create"), async (req, res, next) => {
+router.patch("/:id", authenticate, requirePermission("problems:create"), validate(updateProblemSchema), async (req, res, next) => {
   try {
-    const problem = await prisma.problem.update({ where: { id: req.params.id }, data: req.body });
+    await ensureProblemMutationAccess(req.user!, req.params.id);
+
+    const {
+      scope,
+      scopeSectionId,
+      scopeDepartmentId,
+      boilerplates,
+      ...rest
+    } = req.body as z.infer<typeof updateProblemSchema>;
+    const effectiveScope = scope;
+    const updateData: Prisma.ProblemUncheckedUpdateInput = {
+      ...rest,
+      ...(effectiveScope ? { scope: effectiveScope, visibility: mapScopeToVisibility(effectiveScope) } : {}),
+      ...(effectiveScope === "SECTION"
+        ? { scopeSectionId: scopeSectionId ?? null, classId: scopeSectionId ?? null, scopeDepartmentId: null, departmentId: null }
+        : {}),
+      ...(effectiveScope === "DEPARTMENT"
+        ? { scopeDepartmentId: scopeDepartmentId ?? null, departmentId: scopeDepartmentId ?? null, scopeSectionId: null, classId: null }
+        : {}),
+      ...(effectiveScope === "GLOBAL"
+        ? { scopeSectionId: null, classId: null, scopeDepartmentId: null, departmentId: null }
+        : {}),
+    };
+
+    const problem = await prisma.$transaction(async (tx) => {
+      const updated = await tx.problem.update({ where: { id: req.params.id }, data: updateData });
+      if (boilerplates) {
+        await tx.boilerplate.deleteMany({ where: { problemId: req.params.id } });
+        if (boilerplates.length > 0) {
+          await tx.boilerplate.createMany({
+            data: boilerplates.map((entry) => ({ problemId: req.params.id, language: entry.language, code: entry.code })),
+          });
+        }
+      }
+      return updated;
+    });
     res.json({ success: true, data: problem });
   } catch (err) {
     next(err);
@@ -863,8 +941,9 @@ router.patch("/:id", authenticate, requirePermission("problems:create"), async (
 });
 
 // DELETE /api/problems/:id
-router.delete("/:id", authenticate, requirePermission("problems:delete"), async (req, res, next) => {
+router.delete("/:id", authenticate, requirePermission("problems:create"), async (req, res, next) => {
   try {
+    await ensureProblemMutationAccess(req.user!, req.params.id);
     await prisma.problem.delete({ where: { id: req.params.id } });
     res.json({ success: true, message: "Problem deleted" });
   } catch (err) {
@@ -873,8 +952,9 @@ router.delete("/:id", authenticate, requirePermission("problems:delete"), async 
 });
 
 // POST /api/problems/:id/test-cases - add test cases
-router.post("/:id/test-cases", authenticate, requireRole(Role.ADMIN, Role.TEACHER), validate(bulkCreateTestCasesSchema), async (req, res, next) => {
+router.post("/:id/test-cases", authenticate, requirePermission("problems:create"), validate(bulkCreateTestCasesSchema), async (req, res, next) => {
   try {
+    await ensureProblemMutationAccess(req.user!, req.params.id);
     const { testCases } = req.body as { testCases: { input: string; expectedOutput: string; isSample: boolean; isHidden: boolean }[] };
     const created = await prisma.testCase.createMany({
       data: testCases.map((tc) => ({ ...tc, problemId: req.params.id })),
@@ -885,9 +965,27 @@ router.post("/:id/test-cases", authenticate, requireRole(Role.ADMIN, Role.TEACHE
   }
 });
 
-// GET /api/problems/:id/test-cases - list test cases (admin/teacher)
-router.get("/:id/test-cases", authenticate, requireRole(Role.ADMIN, Role.TEACHER), async (req, res, next) => {
+// PUT /api/problems/:id/test-cases - replace test cases
+router.put("/:id/test-cases", authenticate, requirePermission("problems:create"), validate(bulkCreateTestCasesSchema), async (req, res, next) => {
   try {
+    await ensureProblemMutationAccess(req.user!, req.params.id);
+    const { testCases } = req.body as { testCases: { input: string; expectedOutput: string; isSample: boolean; isHidden: boolean }[] };
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.testCase.deleteMany({ where: { problemId: req.params.id } });
+      return tx.testCase.createMany({
+        data: testCases.map((tc) => ({ ...tc, problemId: req.params.id })),
+      });
+    });
+    res.json({ success: true, data: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/problems/:id/test-cases - list test cases (admin/teacher)
+router.get("/:id/test-cases", authenticate, requirePermission("problems:create"), async (req, res, next) => {
+  try {
+    await ensureProblemMutationAccess(req.user!, req.params.id);
     const testCases = await prisma.testCase.findMany({ where: { problemId: req.params.id } });
     res.json({ success: true, data: testCases });
   } catch (err) {

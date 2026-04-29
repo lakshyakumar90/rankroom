@@ -42,36 +42,42 @@ function LoginPageContent() {
     setLoading(true);
     try {
       const supabase = createClient();
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: data.email,
-        password: data.password,
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
       });
 
-      if (authError || !authData.user || !authData.session) {
-        throw new Error(authError?.message ?? "Invalid email or password");
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success || !result.data?.session || !result.data?.user) {
+        throw new Error(result?.error ?? "Invalid email or password");
       }
 
-      const response = await fetch("/api/auth/me", {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${authData.session.access_token}`,
-        },
+      const { error: sessionError } = await supabase.auth.setSession({
+        access_token: result.data.session.access_token,
+        refresh_token: result.data.session.refresh_token,
       });
 
-      if (!response.ok) throw new Error("Failed to load user profile");
+      if (sessionError) {
+        throw new Error(sessionError.message);
+      }
 
-      const result = await response.json();
-      if (!result.success || !result.data) throw new Error("Failed to load user profile");
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        throw new Error("Failed to start browser session");
+      }
 
-      setUser(result.data);
+      setUser(result.data.user);
       toast.success("Welcome back");
 
       const targetRoute = redirectedFrom
         ? normalizeInternalPath(redirectedFrom)
-        : getDefaultRouteForRole(result.data.role);
+        : getDefaultRouteForRole(result.data.user.role);
 
       router.replace(targetRoute);
+      router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Login failed");
     } finally {
@@ -176,11 +182,8 @@ function LoginPageContent() {
                 </Button>
               </form>
 
-              <div className="mt-8 flex items-center justify-center gap-3 rounded-xl border border-border/70 bg-muted/40 px-4 py-4 text-sm text-muted-foreground">
-                <span>New here?</span>
-                <Link href="/register" className="font-semibold text-foreground hover:text-primary transition-colors">
-                  Create your account
-                </Link>
+              <div className="mt-8 rounded-xl border border-border/70 bg-muted/40 px-4 py-4 text-center text-sm text-muted-foreground">
+                Accounts are created by your RankRoom administrator.
               </div>
             </CardContent>
           </Card>

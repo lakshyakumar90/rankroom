@@ -20,6 +20,7 @@ import {
   ChevronLeft,
   ClipboardList,
   Code2,
+  FileQuestion,
   FolderKanban,
   GraduationCap,
   LayoutDashboard,
@@ -62,6 +63,7 @@ const NAV_BY_ROLE: Record<Role, NavGroup[]> = {
       title: "Coding",
       items: [
         { href: "/problems", label: "Problems", icon: Code2 },
+        { href: "/problems/create", label: "Create Problem", icon: FileQuestion, permission: "problems:create" },
         { href: "/contests", label: "Contests", icon: Trophy },
         { href: "/leaderboard", label: "Leaderboard", icon: Award },
       ],
@@ -92,6 +94,7 @@ const NAV_BY_ROLE: Record<Role, NavGroup[]> = {
       title: "Coding",
       items: [
         { href: "/problems", label: "Problems", icon: Code2 },
+        { href: "/problems/create", label: "Create Problem", icon: FileQuestion, permission: "problems:create" },
         { href: "/contests", label: "Contests", icon: Trophy },
         { href: "/contests/create", label: "Create Contest", icon: Trophy, permission: "contests:create" },
       ],
@@ -124,6 +127,8 @@ const NAV_BY_ROLE: Record<Role, NavGroup[]> = {
       items: [
         { href: "/assignments", label: "Assignments", icon: BookOpen },
         { href: "/grades", label: "Grades", icon: GraduationCap },
+        { href: "/problems", label: "Problems", icon: Code2 },
+        { href: "/problems/create", label: "Create Problem", icon: FileQuestion, permission: "problems:create" },
         { href: "/contests/create", label: "Contests", icon: Trophy },
         { href: "/department/hackathons", label: "Manage Events", icon: Sparkles, permission: "hackathons:create" },
         { href: "/hackathons", label: "Hackathons", icon: CalendarDays },
@@ -143,6 +148,8 @@ const NAV_BY_ROLE: Record<Role, NavGroup[]> = {
       title: "Programs",
       items: [
         { href: "/assignments", label: "Assignments", icon: BookOpen },
+        { href: "/problems", label: "Problems", icon: Code2 },
+        { href: "/problems/create", label: "Create Problem", icon: FileQuestion, permission: "problems:create" },
         { href: "/contests", label: "Contests", icon: Trophy },
         { href: "/contests/create", label: "Create Contest", icon: Trophy, permission: "contests:create" },
         { href: "/leaderboard", label: "Leaderboard", icon: Award },
@@ -167,6 +174,8 @@ const NAV_BY_ROLE: Record<Role, NavGroup[]> = {
       title: "Operations",
       items: [
         { href: "/analytics", label: "Analytics", icon: BarChart3 },
+        { href: "/problems", label: "Problems", icon: Code2 },
+        { href: "/problems/create", label: "Create Problem", icon: FileQuestion, permission: "problems:create" },
         { href: "/contests/create", label: "Create Contest", icon: Trophy, permission: "contests:create" },
         { href: "/department/hackathons", label: "Manage Events", icon: Sparkles, permission: "hackathons:create" },
         { href: "/hackathons", label: "Hackathons", icon: CalendarDays },
@@ -189,6 +198,8 @@ const NAV_BY_ROLE: Record<Role, NavGroup[]> = {
       title: "Operations",
       items: [
         { href: "/analytics", label: "Analytics", icon: BarChart3 },
+        { href: "/problems", label: "Problems", icon: Code2 },
+        { href: "/problems/create", label: "Create Problem", icon: FileQuestion, permission: "problems:create" },
         { href: "/contests/create", label: "Create Contest", icon: Trophy, permission: "contests:create" },
         { href: "/department/hackathons", label: "Manage Events", icon: Sparkles, permission: "hackathons:create" },
         { href: "/hackathons", label: "Hackathons", icon: CalendarDays },
