@@ -15,6 +15,7 @@ import { DepartmentSectionsTab } from "@/components/departments/DepartmentSectio
 import { DepartmentTeachersTab } from "@/components/departments/DepartmentTeachersTab";
 import { DepartmentStudentsTab } from "@/components/departments/DepartmentStudentsTab";
 import { DepartmentContestsTab } from "@/components/departments/DepartmentContestsTab";
+import { DepartmentHackathonsTab } from "@/components/departments/DepartmentHackathonsTab";
 import { DepartmentLeaderboardTab } from "@/components/departments/DepartmentLeaderboardTab";
 
 interface Department {
@@ -103,7 +104,7 @@ export default function DepartmentDashboardPage() {
           <DepartmentContestsTab departmentId={params.id} />
         </TabsContent>
         <TabsContent value="hackathons" className="mt-6">
-          <p className="text-sm text-muted-foreground">Hackathons view coming soon.</p>
+          <DepartmentHackathonsTab departmentId={params.id} />
         </TabsContent>
         <TabsContent value="leaderboard" className="mt-6">
           <DepartmentLeaderboardTab departmentId={params.id} />

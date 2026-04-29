@@ -1,6 +1,7 @@
 "use client";
 
 import { io, type Socket } from "socket.io-client";
+import { createClient } from "./supabase/client";
 
 let socket: Socket | null = null;
 
@@ -12,5 +13,16 @@ export function getSocket(): Socket {
     transports: ["websocket"],
   });
 
+  return socket;
+}
+
+export async function syncSocketAuthToken(): Promise<Socket> {
+  const socket = getSocket();
+  const supabase = createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  socket.auth = { token: session?.access_token ?? undefined };
   return socket;
 }

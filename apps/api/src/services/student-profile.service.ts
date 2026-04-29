@@ -171,14 +171,16 @@ export async function updateBasicProfile(userId: string, data: {
   githubUsername?: string;
   isPublic?: boolean;
   phoneNumber?: string;
+  avatar?: string;
 }) {
   await Promise.all([
-    data.name !== undefined || data.githubUsername !== undefined
+    data.name !== undefined || data.githubUsername !== undefined || data.avatar !== undefined
       ? prisma.user.update({
           where: { id: userId },
           data: {
             ...(data.name !== undefined ? { name: data.name } : {}),
             ...(data.githubUsername !== undefined ? { githubUsername: data.githubUsername } : {}),
+            ...(data.avatar !== undefined ? { avatar: data.avatar || null } : {}),
           },
         })
       : null,

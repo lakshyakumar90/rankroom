@@ -7,7 +7,7 @@ import {
   emitNotificationToUser,
 } from "../lib/socket";
 
-function toNotificationDto(notification: Awaited<ReturnType<typeof prisma.notification.create>>): Notification {
+export function toNotificationDto(notification: Awaited<ReturnType<typeof prisma.notification.create>>): Notification {
   return {
     id: notification.id,
     userId: notification.userId,

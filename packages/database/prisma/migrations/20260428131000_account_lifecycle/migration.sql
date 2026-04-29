@@ -1,0 +1,7 @@
+ALTER TABLE "users"
+ADD COLUMN IF NOT EXISTS "isActive" BOOLEAN NOT NULL DEFAULT true,
+ADD COLUMN IF NOT EXISTS "deactivatedAt" TIMESTAMP(3),
+ADD COLUMN IF NOT EXISTS "deactivatedById" TEXT,
+ADD COLUMN IF NOT EXISTS "deactivationReason" TEXT;
+
+CREATE INDEX IF NOT EXISTS "users_isActive_idx" ON "users"("isActive");

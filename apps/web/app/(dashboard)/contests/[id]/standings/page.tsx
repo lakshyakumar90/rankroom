@@ -73,7 +73,7 @@ export default function ContestStandingsPage({
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Standings</h1>
           <p className="text-muted-foreground text-sm">
-            {standings.length} participants • auto-refreshes every 30s
+            {standings.length} participants • live updates with 60s polling fallback
           </p>
         </div>
       </div>

@@ -231,12 +231,24 @@ export const createAssignmentSchema = z.object({
   subjectId: cuid(),
   dueDate: z.string().datetime(),
   maxScore: z.number().min(1).max(1000),
+  type: z.enum(["CODING", "FILE_UPLOAD", "MCQ", "MIXED"]).optional(),
+  allowLate: z.boolean().optional(),
+  latePenaltyPct: z.number().int().min(0).max(100).optional(),
+  rubric: z.array(
+    z.object({
+      id: z.string().min(1).max(80).optional(),
+      label: z.string().min(1).max(200),
+      points: z.number().min(0),
+      description: z.string().max(1000).optional(),
+    })
+  ).optional().default([]),
   targetStudentIds: z.array(cuid()).optional().default([]),
 });
 
 export const gradeSubmissionSchema = z.object({
   score: z.number().min(0),
   feedback: z.string().max(1000).optional(),
+  rubricEvaluation: z.record(z.string(), z.boolean()).optional(),
 });
 
 export const createProblemSchema = z.object({
@@ -302,7 +314,7 @@ export const createProblemSchema = z.object({
     .default("IGNORE_TRAILING_WHITESPACE"),
   timeLimitMs: z.number().int().min(100).max(30000).optional().default(2000),
   memoryLimitKb: z.number().int().min(16384).max(1048576).optional().default(262144),
-  points: z.number().int().min(1),
+  points: z.number().int().min(1).default(100),
   isPublished: z.boolean().default(false),
 });
 

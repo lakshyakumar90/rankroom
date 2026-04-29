@@ -8,9 +8,31 @@ import { bulkCreateGradesSchema, createGradeSchema } from "@repo/validators";
 import { logActivity } from "../lib/activity";
 import { recomputeSectionLeaderboard } from "../services/leaderboard.service";
 import { calculateStudentCgpa, syncStudentProfileCgpa } from "../services/cgpa.service";
+import { emitNotificationToUser } from "../lib/socket";
+import { toNotificationDto } from "../services/notification.service";
+import { z } from "zod";
 
 const router: ExpressRouter = Router();
 router.use(authenticate);
+
+const updateGradeSchema = z
+  .object({
+    marks: z.number().min(0).optional(),
+    maxMarks: z.number().min(1).optional(),
+    remarks: z.string().max(500).optional(),
+    semester: z.number().int().min(1).max(12).optional(),
+  })
+  .refine((data) => data.marks === undefined || data.maxMarks === undefined || data.marks <= data.maxMarks, {
+    message: "marks cannot exceed maxMarks",
+    path: ["marks"],
+  });
+
+const publishGradesSchema = z.object({
+  subjectId: z.string().cuid(),
+  examType: z.enum(["MID", "FINAL", "INTERNAL", "ASSIGNMENT"]).optional(),
+  semester: z.number().int().min(1).max(12).optional(),
+  studentIds: z.array(z.string().cuid()).optional(),
+});
 
 function canManageGrades(role: Role) {
   return [
@@ -138,29 +160,11 @@ router.post("/", validate(createGradeSchema), async (req, res, next) => {
       },
     });
 
-    await prisma.notification.create({
-      data: {
-        userId: grade.studentId,
-        type: "ASSIGNMENT_GRADED",
-        title: "Grade Published",
-        message: `${grade.subject.name} ${grade.examType.toLowerCase()} marks published: ${grade.marks}/${grade.maxMarks}`,
-        link: `/grades/student/${grade.studentId}`,
-        entityId: grade.id,
-        entityType: "GRADE",
-        targetRole: Role.STUDENT,
-        targetSectionId: subject.sectionId,
-        targetDepartmentId: subject.departmentId,
-      },
-    });
-
     await logActivity(req.user!.id, "grade.created", {
       gradeId: grade.id,
       studentId: grade.studentId,
       subjectId: grade.subjectId,
     });
-
-    await syncStudentProfileCgpa(grade.studentId);
-    await recomputeSectionLeaderboard(subject.sectionId);
 
     res.status(201).json({ success: true, data: grade });
   } catch (error) {
@@ -236,10 +240,6 @@ router.post("/bulk", validate(bulkCreateGradesSchema), async (req, res, next) =>
       semester,
     });
 
-    const affectedStudentIds = Array.from(new Set(upserted.map((entry) => entry.studentId)));
-    await Promise.all(affectedStudentIds.map((studentId) => syncStudentProfileCgpa(studentId)));
-    await recomputeSectionLeaderboard(subject.sectionId);
-
     res.status(201).json({
       success: true,
       data: upserted,
@@ -311,7 +311,10 @@ router.get("/student/:studentId", async (req, res, next) => {
     }
 
     const grades = await prisma.grade.findMany({
-      where: { studentId: req.params.studentId },
+      where: {
+        studentId: req.params.studentId,
+        ...(req.user!.role === Role.STUDENT ? { isPublished: true } : {}),
+      },
       include: { subject: { select: { id: true, name: true, code: true } } },
       orderBy: { createdAt: "desc" },
     });
@@ -322,7 +325,7 @@ router.get("/student/:studentId", async (req, res, next) => {
   }
 });
 
-router.patch("/:id", async (req, res, next) => {
+router.patch("/:id", validate(updateGradeSchema), async (req, res, next) => {
   try {
     const grade = await ensureGradeAccess(req.user!, req.params.id);
     if (req.user!.role === Role.STUDENT) {
@@ -412,6 +415,77 @@ router.get("/subject/:subjectId/report", async (req, res, next) => {
         ...value,
       })),
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/publish", validate(publishGradesSchema), async (req, res, next) => {
+  try {
+    const { subjectId, examType, semester, studentIds } = req.body as z.infer<typeof publishGradesSchema>;
+    const subject = await ensureSubjectGradeAccess(req.user!, subjectId);
+
+    const where = {
+      subjectId,
+      ...(examType ? { examType } : {}),
+      ...(semester ? { semester } : {}),
+      ...(studentIds?.length ? { studentId: { in: studentIds } } : {}),
+    };
+
+    const grades = await prisma.grade.findMany({
+      where,
+      include: { subject: { select: { name: true } } },
+    });
+
+    if (grades.length === 0) {
+      throw new AppError("No matching grades to publish", 404);
+    }
+
+    const now = new Date();
+    await prisma.grade.updateMany({
+      where: { id: { in: grades.map((grade) => grade.id) } },
+      data: {
+        isPublished: true,
+        publishedAt: now,
+        publishedById: req.user!.id,
+      },
+    });
+
+    const notifications = await prisma.$transaction(
+      grades.map((grade) =>
+        prisma.notification.create({
+          data: {
+            userId: grade.studentId,
+            type: "GRADE_PUBLISHED",
+            title: "Grade Published",
+            message: `${grade.subject.name} ${grade.examType.toLowerCase()} marks published: ${grade.marks}/${grade.maxMarks}`,
+            link: `/grades`,
+            entityId: grade.id,
+            entityType: "GRADE",
+            targetRole: Role.STUDENT,
+            targetSectionId: subject.sectionId,
+            targetDepartmentId: subject.departmentId,
+          },
+        })
+      )
+    );
+
+    notifications.forEach((notification) => {
+      emitNotificationToUser(notification.userId, toNotificationDto(notification));
+    });
+
+    const affectedStudentIds = Array.from(new Set(grades.map((grade) => grade.studentId)));
+    await Promise.all(affectedStudentIds.map((studentId) => syncStudentProfileCgpa(studentId)));
+    await recomputeSectionLeaderboard(subject.sectionId);
+
+    await logActivity(req.user!.id, "grade.published", {
+      subjectId,
+      examType: examType ?? null,
+      semester: semester ?? null,
+      count: grades.length,
+    });
+
+    res.json({ success: true, data: { publishedCount: grades.length } });
   } catch (error) {
     next(error);
   }

@@ -16,8 +16,10 @@ import {
   createHackathonTeamController,
   deleteHackathonController,
   getHackathonController,
+  acceptHackathonTeamInviteController,
   hackathonEligibilityController,
   hackathonRegistrationsController,
+  inviteHackathonTeamController,
   listHackathonsController,
   notifyHackathonController,
   registerHackathonController,
@@ -28,6 +30,16 @@ import {
 import {
   buildHackathonViewerPayload,
 } from "../services/event-registration.service";
+import {
+  acceptTeamInvite,
+  approveJoinRequest,
+  createEventTeam,
+  listOpenTeams,
+  rejectJoinRequest,
+  requestToJoinTeam,
+  sendTeamInvite,
+  transferTeamLeadership,
+} from "../services/event-team.service";
 import { z } from "zod";
 
 const router: ExpressRouter = Router();
@@ -81,6 +93,10 @@ router.delete(
   deleteHackathonController
 );
 router.post("/:id/register", authenticate, requirePermission("hackathons:register"), registerHackathonController);
+router.post("/:id/teams", authenticate, requirePermission("hackathons:register"), validate(createHackathonTeamSchema), createHackathonTeamController);
+router.put("/:id/teams/:teamId", authenticate, requirePermission("hackathons:register"), validate(updateHackathonTeamSchema), updateHackathonTeamController);
+router.post("/:id/teams/:teamId/invites", authenticate, requirePermission("hackathons:register"), inviteHackathonTeamController);
+router.post("/:id/teams/invites/:inviteId/accept", authenticate, requirePermission("hackathons:register"), acceptHackathonTeamInviteController);
 router.put(
   "/:id/winners",
   authenticate,
@@ -106,18 +122,75 @@ router.post("/:id/teams/legacy", authenticate, requirePermission("hackathons:reg
 router.put("/:id/teams/legacy/:teamId", authenticate, requirePermission("hackathons:register"), validate(updateHackathonTeamSchema), updateHackathonTeamController);
 
 // ── New event team routes ──────────────────────────────────────────────────────
-const createTeamSchema = z.object({ body: z.object({ name: z.string().min(1).max(60) }) });
-const joinRequestSchema = z.object({ body: z.object({ message: z.string().max(200).optional() }) });
-const inviteSchema = z.object({ body: z.object({ invitedId: z.string().min(1) }) });
-const transferSchema = z.object({ body: z.object({ newLeaderId: z.string().min(1) }) });
+const createTeamSchema = z.object({ name: z.string().min(1).max(60) });
+const joinRequestSchema = z.object({ message: z.string().max(200).optional() });
+const inviteSchema = z.object({ invitedId: z.string().min(1) });
+const transferSchema = z.object({ newLeaderId: z.string().min(1) });
 
-router.all("/:id/event-teams", authenticate, async (_req, _res, next) => next(new AppError("Hackathon team flows are disabled for offline registration events", 410)));
-router.all("/:id/event-teams/:teamId/join-requests", authenticate, async (_req, _res, next) => next(new AppError("Hackathon team flows are disabled for offline registration events", 410)));
-router.all("/:id/event-teams/:teamId/join-requests/:requestId/approve", authenticate, async (_req, _res, next) => next(new AppError("Hackathon team flows are disabled for offline registration events", 410)));
-router.all("/:id/event-teams/:teamId/join-requests/:requestId/reject", authenticate, async (_req, _res, next) => next(new AppError("Hackathon team flows are disabled for offline registration events", 410)));
-router.all("/:id/event-teams/:teamId/invites", authenticate, async (_req, _res, next) => next(new AppError("Hackathon team flows are disabled for offline registration events", 410)));
-router.all("/:id/event-teams/invites/:inviteId/accept", authenticate, async (_req, _res, next) => next(new AppError("Hackathon team flows are disabled for offline registration events", 410)));
-router.all("/:id/event-teams/:teamId/transfer-leadership", authenticate, async (_req, _res, next) => next(new AppError("Hackathon team flows are disabled for offline registration events", 410)));
+router.get("/:id/event-teams", authenticate, async (req, res, next) => {
+  try {
+    const teams = await listOpenTeams(req.params.id);
+    res.json({ success: true, data: teams });
+  } catch (error) {
+    next(error);
+  }
+});
+router.post("/:id/event-teams", authenticate, requirePermission("hackathons:register"), validate(createTeamSchema), async (req, res, next) => {
+  try {
+    const team = await createEventTeam({ hackathonId: req.params.id, leaderId: req.user!.id, name: req.body.name });
+    res.status(201).json({ success: true, data: team });
+  } catch (error) {
+    next(error);
+  }
+});
+router.post("/:id/event-teams/:teamId/join-requests", authenticate, requirePermission("hackathons:register"), validate(joinRequestSchema), async (req, res, next) => {
+  try {
+    const request = await requestToJoinTeam(req.params.teamId, req.user!.id, req.body.message);
+    res.status(201).json({ success: true, data: request });
+  } catch (error) {
+    next(error);
+  }
+});
+router.post("/:id/event-teams/:teamId/join-requests/:requestId/approve", authenticate, requirePermission("hackathons:register"), async (req, res, next) => {
+  try {
+    const result = await approveJoinRequest(req.params.requestId, req.user!.id);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+router.post("/:id/event-teams/:teamId/join-requests/:requestId/reject", authenticate, requirePermission("hackathons:register"), async (req, res, next) => {
+  try {
+    const result = await rejectJoinRequest(req.params.requestId, req.user!.id);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+router.post("/:id/event-teams/:teamId/invites", authenticate, requirePermission("hackathons:register"), validate(inviteSchema), async (req, res, next) => {
+  try {
+    const invite = await sendTeamInvite(req.params.teamId, req.body.invitedId, req.user!.id);
+    res.status(201).json({ success: true, data: invite });
+  } catch (error) {
+    next(error);
+  }
+});
+router.post("/:id/event-teams/invites/:inviteId/accept", authenticate, requirePermission("hackathons:register"), async (req, res, next) => {
+  try {
+    const result = await acceptTeamInvite(req.params.inviteId, req.user!.id);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+router.post("/:id/event-teams/:teamId/transfer-leadership", authenticate, requirePermission("hackathons:register"), validate(transferSchema), async (req, res, next) => {
+  try {
+    const result = await transferTeamLeadership(req.params.teamId, req.user!.id, req.body.newLeaderId);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
 router.post(
   "/:id/winners",
   authenticate,

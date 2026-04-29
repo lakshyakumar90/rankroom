@@ -84,6 +84,35 @@ export async function updateHackathonTeamController(req: Request, res: Response,
   }
 }
 
+export async function inviteHackathonTeamController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const invitedId = typeof req.body?.invitedId === "string" ? req.body.invitedId : req.body?.userId;
+    if (typeof invitedId !== "string" || invitedId.length === 0) {
+      res.status(400).json({ success: false, error: "invitedId is required" });
+      return;
+    }
+
+    const data = await hackathonService.inviteUserToHackathonTeam(
+      req.params.id,
+      req.params.teamId,
+      req.user!.id,
+      invitedId
+    );
+    res.status(201).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function acceptHackathonTeamInviteController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const data = await hackathonService.acceptHackathonTeamInvite(req.params.id, req.params.inviteId, req.user!.id);
+    res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function notifyHackathonController(req: Request, res: Response, next: NextFunction) {
   try {
     const title = typeof req.body?.title === "string" ? req.body.title : "Hackathon update";

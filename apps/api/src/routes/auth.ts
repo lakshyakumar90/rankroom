@@ -9,6 +9,9 @@ import { Role, type Role as RoleType } from "@repo/types";
 import { ensureUniqueHandle } from "../lib/handles";
 import { syncSupabaseUserToDatabase } from "../lib/auth-sync";
 import { buildUserScope } from "../services/scope.service";
+import { logActivity } from "../lib/activity";
+import { z } from "zod";
+import { createClient } from "@supabase/supabase-js";
 import type {
   MeResponse,
   LogoutResponse,
@@ -16,6 +19,18 @@ import type {
 } from "../types/auth.types";
 
 const router: ExpressRouter = Router();
+const passwordAuthClient = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_KEY!, {
+  auth: { autoRefreshToken: false, persistSession: false },
+});
+
+const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
+
+const refreshSchema = z.object({
+  refreshToken: z.string().min(1),
+});
 
 const fullUserInclude = {
   profile: true,
@@ -100,6 +115,73 @@ function parseSyncRole(value: unknown): RoleType | undefined {
   return value as RoleType;
 }
 
+async function buildAuthUserResponse(userId: string) {
+  const fullUser = await findAuthUserById(userId);
+  if (!fullUser) {
+    throw new AppError("Failed to load user", 500);
+  }
+
+  if (!fullUser.isActive) {
+    throw new AppError("Account is deactivated", 401);
+  }
+
+  const scope = await buildUserScope(fullUser.id, fullUser.role as RoleType);
+  return { ...fullUser, role: fullUser.role as RoleType, scope } as AuthUser;
+}
+
+router.post("/login", validate(loginSchema), async (req, res, next) => {
+  try {
+    const { email, password } = req.body as z.infer<typeof loginSchema>;
+    const { data, error } = await passwordAuthClient.auth.signInWithPassword({ email, password });
+    if (error || !data.session || !data.user) {
+      throw new AppError("Invalid email or password", 401);
+    }
+
+    const syncedUser = await syncSupabaseUserToDatabase(data.user);
+    const authUser = await buildAuthUserResponse(syncedUser.id);
+    void logActivity(syncedUser.id, "auth.login");
+
+    res.json({
+      success: true,
+      accessToken: data.session.access_token,
+      refreshToken: data.session.refresh_token,
+      data: {
+        accessToken: data.session.access_token,
+        refreshToken: data.session.refresh_token,
+        user: authUser,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/refresh", validate(refreshSchema), async (req, res, next) => {
+  try {
+    const { refreshToken } = req.body as z.infer<typeof refreshSchema>;
+    const { data, error } = await passwordAuthClient.auth.refreshSession({ refresh_token: refreshToken });
+    if (error || !data.session || !data.user) {
+      throw new AppError("Invalid refresh token", 401);
+    }
+
+    const syncedUser = await syncSupabaseUserToDatabase(data.user);
+    const authUser = await buildAuthUserResponse(syncedUser.id);
+
+    res.json({
+      success: true,
+      accessToken: data.session.access_token,
+      refreshToken: data.session.refresh_token,
+      data: {
+        accessToken: data.session.access_token,
+        refreshToken: data.session.refresh_token,
+        user: authUser,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ============================================================================
 // GET /api/auth/me
 // Returns current authenticated user's full profile (SINGLE SOURCE OF TRUTH)
@@ -110,6 +192,10 @@ router.get("/me", authenticate, async (req, res, next) => {
 
     if (!user) {
       throw new AppError("User not found", 404);
+    }
+
+    if (!user.isActive) {
+      throw new AppError("Account is deactivated", 401);
     }
 
     // Always compute scope from fresh DB state.
@@ -176,6 +262,8 @@ router.post("/sync", async (req, res, next) => {
     const scope = await buildUserScope(fullUser.id, fullUser.role as RoleType);
     const authUser: AuthUser = { ...fullUser, role: fullUser.role as RoleType, scope } as AuthUser;
 
+    void logActivity(fullUser.id, "auth.synced", { supabaseId: fullUser.supabaseId });
+
     res.json({ success: true, data: authUser });
   } catch (err) {
     next(err);
@@ -192,8 +280,17 @@ router.post("/logout", async (req, res, next) => {
     
     if (authHeader?.startsWith("Bearer ")) {
       const token = authHeader.substring(7);
+      const {
+        data: { user: supabaseUser },
+      } = await supabase.auth.getUser(token);
+      const dbUser = supabaseUser
+        ? await prisma.user.findUnique({ where: { supabaseId: supabaseUser.id }, select: { id: true } })
+        : null;
       // Revoke the session via admin API (invalidates the token server-side)
       await supabase.auth.admin.signOut(token);
+      if (dbUser) {
+        void logActivity(dbUser.id, "auth.logout");
+      }
     }
 
     const response: LogoutResponse = {

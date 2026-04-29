@@ -4,7 +4,7 @@ import { authenticate, canAccessSection, optionalAuth, requireRole } from "../mi
 import { AppError } from "../middleware/error";
 import { Role } from "@repo/types";
 import { fallbackHandle } from "../lib/handles";
-import { getStudentProfile } from "../services/student-profile.service";
+import { getStudentProfile, updateBasicProfile, updateOwnStudentProfile } from "../services/student-profile.service";
 
 const router: ExpressRouter = Router();
 
@@ -119,6 +119,92 @@ router.get("/public/:handle", optionalAuth, async (req, res, next) => {
 
 router.get("/:id/profile", optionalAuth, async (req, res, next) => {
   try {
+    const data = await getStudentProfile(req.user, req.params.id);
+    res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/:id/profile", authenticate, async (req, res, next) => {
+  try {
+    const isOwnProfile = req.user!.id === req.params.id;
+    const canManageProfiles = [Role.SUPER_ADMIN, Role.ADMIN, Role.DEPARTMENT_HEAD, Role.CLASS_COORDINATOR].includes(req.user!.role);
+    if (!isOwnProfile && !canManageProfiles) {
+      throw new AppError("Forbidden", 403);
+    }
+
+    const {
+      name,
+      bio,
+      handle,
+      githubUsername,
+      avatar,
+      isPublic,
+      phoneNumber,
+      leetcodeUsername,
+      codechefUsername,
+      codeforcesUsername,
+      hackerrankUsername,
+      cgpa,
+    } = req.body as Record<string, unknown>;
+
+    await updateBasicProfile(req.params.id, {
+      ...(typeof name === "string" ? { name } : {}),
+      ...(typeof bio === "string" ? { bio } : {}),
+      ...(typeof handle === "string" ? { handle } : {}),
+      ...(typeof githubUsername === "string" ? { githubUsername } : {}),
+      ...(typeof avatar === "string" ? { avatar } : {}),
+      ...(typeof isPublic === "boolean" ? { isPublic } : {}),
+      ...(typeof phoneNumber === "string" ? { phoneNumber } : {}),
+    });
+
+    if (isOwnProfile) {
+      await updateOwnStudentProfile(req.user!, {
+        ...(typeof bio === "string" ? { bio } : {}),
+        ...(typeof githubUsername === "string" ? { githubUsername } : {}),
+        ...(typeof leetcodeUsername === "string" ? { leetcodeUsername } : {}),
+        ...(typeof codechefUsername === "string" ? { codechefUsername } : {}),
+        ...(typeof codeforcesUsername === "string" ? { codeforcesUsername } : {}),
+        ...(typeof hackerrankUsername === "string" ? { hackerrankUsername } : {}),
+        ...(typeof cgpa === "number" ? { cgpa } : {}),
+        ...(typeof isPublic === "boolean" ? { isPublic } : {}),
+      });
+    } else if (
+      typeof githubUsername === "string" ||
+      typeof leetcodeUsername === "string" ||
+      typeof codechefUsername === "string" ||
+      typeof codeforcesUsername === "string" ||
+      typeof hackerrankUsername === "string" ||
+      typeof cgpa === "number" ||
+      typeof isPublic === "boolean"
+    ) {
+      await prisma.studentProfile.upsert({
+        where: { userId: req.params.id },
+        update: {
+          ...(typeof bio === "string" ? { bio } : {}),
+          ...(typeof githubUsername === "string" ? { githubUsername } : {}),
+          ...(typeof leetcodeUsername === "string" ? { leetcodeUsername } : {}),
+          ...(typeof codechefUsername === "string" ? { codechefUsername } : {}),
+          ...(typeof codeforcesUsername === "string" ? { codeforcesUsername } : {}),
+          ...(typeof hackerrankUsername === "string" ? { hackerrankUsername } : {}),
+          ...(typeof cgpa === "number" ? { cgpa } : {}),
+          ...(typeof isPublic === "boolean" ? { isPublic } : {}),
+        },
+        create: {
+          userId: req.params.id,
+          ...(typeof bio === "string" ? { bio } : {}),
+          ...(typeof githubUsername === "string" ? { githubUsername } : {}),
+          ...(typeof leetcodeUsername === "string" ? { leetcodeUsername } : {}),
+          ...(typeof codechefUsername === "string" ? { codechefUsername } : {}),
+          ...(typeof codeforcesUsername === "string" ? { codeforcesUsername } : {}),
+          ...(typeof hackerrankUsername === "string" ? { hackerrankUsername } : {}),
+          ...(typeof cgpa === "number" ? { cgpa } : {}),
+          ...(typeof isPublic === "boolean" ? { isPublic } : {}),
+        },
+      });
+    }
+
     const data = await getStudentProfile(req.user, req.params.id);
     res.json({ success: true, data });
   } catch (error) {

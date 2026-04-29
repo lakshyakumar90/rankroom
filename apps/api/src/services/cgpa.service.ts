@@ -27,10 +27,11 @@ export interface StudentCgpaResult {
 
 export async function calculateStudentCgpa(
   studentId: string,
+  includeUnpublished = false,
   db: PrismaCgpaClient = prisma
 ): Promise<StudentCgpaResult> {
   const grades = await db.grade.findMany({
-    where: { studentId },
+    where: { studentId, ...(includeUnpublished ? {} : { isPublished: true }) },
     include: { subject: { select: { id: true, name: true, code: true } } },
     orderBy: { createdAt: "desc" },
   });
@@ -86,7 +87,7 @@ export async function syncStudentProfileCgpa(
   studentId: string,
   db: PrismaCgpaClient = prisma
 ): Promise<number | null> {
-  const cgpaResult = await calculateStudentCgpa(studentId, db);
+  const cgpaResult = await calculateStudentCgpa(studentId, false, db);
 
   await db.studentProfile.upsert({
     where: { userId: studentId },

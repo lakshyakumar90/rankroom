@@ -404,7 +404,8 @@ router.get("/section/:sectionId/at-risk", async (req, res, next) => {
     const { sectionId } = req.params;
     const now = new Date();
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+    const atRiskAssignmentLimit = 10;
 
     const enrollments = await prisma.enrollment.findMany({
       where: { sectionId },
@@ -416,7 +417,7 @@ router.get("/section/:sectionId/at-risk", async (req, res, next) => {
 
     const studentIds = enrollments.map((e) => e.studentId);
 
-    const [attendanceData, submissionData, assignmentData, upcomingDeadlines] = await Promise.all([
+    const [attendanceData, submissionData, assignmentData, gradeData] = await Promise.all([
       // Attendance in last 30 days
       prisma.attendanceRecord.groupBy({
         by: ["studentId", "status"],
@@ -429,9 +430,13 @@ router.get("/section/:sectionId/at-risk", async (req, res, next) => {
         where: { userId: { in: studentIds }, createdAt: { gte: thirtyDaysAgo } },
         _count: true,
       }),
-      // Overdue/missing assignment submissions
+      // Overdue/missing assignment submissions from the past two weeks
       prisma.assignment.findMany({
-        where: { subject: { sectionId }, dueDate: { lte: now }, status: { in: ["ACTIVE", "DEADLINE_EXPIRED"] } },
+        where: {
+          subject: { sectionId },
+          dueDate: { gte: fourteenDaysAgo, lte: now },
+          status: { in: ["ACTIVE", "DEADLINE_EXPIRED"] },
+        },
         select: {
           id: true,
           title: true,
@@ -442,19 +447,12 @@ router.get("/section/:sectionId/at-risk", async (req, res, next) => {
             select: { studentId: true },
           },
         },
-        take: 10,
+        orderBy: { dueDate: "desc" },
+        take: atRiskAssignmentLimit,
       }),
-      // Upcoming deadlines in 7 days with no submission
-      prisma.assignment.findMany({
-        where: { subject: { sectionId }, dueDate: { gte: now, lte: sevenDaysAgo }, status: "ACTIVE" },
-        select: {
-          id: true,
-          title: true,
-          dueDate: true,
-          audience: { where: { studentId: { in: studentIds } }, select: { studentId: true } },
-          submissions: { where: { studentId: { in: studentIds } }, select: { studentId: true } },
-        },
-        take: 5,
+      prisma.grade.findMany({
+        where: { studentId: { in: studentIds }, subject: { sectionId } },
+        select: { studentId: true, marks: true, maxMarks: true },
       }),
     ]);
 
@@ -481,7 +479,9 @@ router.get("/section/:sectionId/at-risk", async (req, res, next) => {
     // Build missing assignment map: studentId → count of overdue assignments with no submission
     const missingMap = new Map<string, number>();
     for (const assignment of assignmentData) {
-      const assignedIds = new Set(assignment.audience.map((a) => a.studentId));
+      const assignedIds = new Set(
+        assignment.audience.length > 0 ? assignment.audience.map((a) => a.studentId) : studentIds
+      );
       const submittedIds = new Set(assignment.submissions.map((s) => s.studentId));
       for (const sid of assignedIds) {
         if (!submittedIds.has(sid)) {
@@ -490,15 +490,25 @@ router.get("/section/:sectionId/at-risk", async (req, res, next) => {
       }
     }
 
+    const gradeMap = new Map<string, { marks: number; maxMarks: number }>();
+    for (const grade of gradeData) {
+      const entry = gradeMap.get(grade.studentId) ?? { marks: 0, maxMarks: 0 };
+      entry.marks += Number(grade.marks);
+      entry.maxMarks += Number(grade.maxMarks);
+      gradeMap.set(grade.studentId, entry);
+    }
+
     const atRiskStudents = enrollments
       .map((enrollment) => {
         const att = attMap.get(enrollment.studentId) ?? { present: 0, total: 0 };
         const sub = subMap.get(enrollment.studentId) ?? { accepted: 0, total: 0 };
         const missedAssignments = missingMap.get(enrollment.studentId) ?? 0;
+        const gradeStats = gradeMap.get(enrollment.studentId) ?? { marks: 0, maxMarks: 0 };
 
         const attendancePct = att.total > 0 ? Math.round((att.present / att.total) * 100) : null;
         const submissionActivity = sub.total;
         const acceptanceRate = sub.total > 0 ? Math.round((sub.accepted / sub.total) * 100) : 0;
+        const compositeScore = gradeStats.maxMarks > 0 ? Math.round((gradeStats.marks / gradeStats.maxMarks) * 100) : null;
 
         // Risk score: 0-100
         const riskFactors: string[] = [];
@@ -519,10 +529,15 @@ router.get("/section/:sectionId/at-risk", async (req, res, next) => {
 
         if (missedAssignments >= 2) {
           riskScore += 25;
-          riskFactors.push(`${missedAssignments} overdue assignments`);
+          riskFactors.push(`${missedAssignments} unsubmitted assignments in the past 2 weeks`);
         } else if (missedAssignments === 1) {
           riskScore += 12;
-          riskFactors.push("1 overdue assignment");
+          riskFactors.push("1 unsubmitted assignment in the past 2 weeks");
+        }
+
+        if (compositeScore !== null && compositeScore < 40) {
+          riskScore += 25;
+          riskFactors.push(`Composite score below passing threshold: ${compositeScore}%`);
         }
 
         if (acceptanceRate < 20 && sub.total >= 5) {
@@ -538,6 +553,7 @@ router.get("/section/:sectionId/at-risk", async (req, res, next) => {
           submissionActivity,
           acceptanceRate,
           missedAssignments,
+          compositeScore,
           isAtRisk: riskScore >= 30,
         };
       })

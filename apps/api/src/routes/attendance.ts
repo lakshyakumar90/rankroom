@@ -3,6 +3,7 @@ import { validate } from "../middleware/validate";
 import { attendanceSessionUpsertSchema } from "@repo/validators";
 import { authenticate } from "../middleware/auth";
 import { requirePermission, requireScope } from "../middleware/permissions";
+import { prisma } from "@repo/database";
 import {
   createAttendanceSessionController,
   getAttendanceSessionController,
@@ -18,9 +19,18 @@ import {
   getStudentOverallAttendance,
 } from "../services/attendance.service";
 import { AppError } from "../middleware/error";
+import { z } from "zod";
 
 const router: ExpressRouter = Router();
 router.use(authenticate);
+
+const submitExcuseSchema = z.object({
+  reason: z.string().trim().min(5).max(1000),
+});
+
+const reviewExcuseSchema = z.object({
+  status: z.enum(["APPROVED", "REJECTED"]),
+});
 
 function normalizeAttendancePayload(body: Record<string, unknown>) {
   const sectionId = typeof body.sectionId === "string" ? body.sectionId : typeof body.batchId === "string" ? body.batchId : undefined;
@@ -75,6 +85,69 @@ router.get(
     };
   }),
   getAttendanceSessionController
+);
+
+router.post("/records/:recordId/excuse", validate(submitExcuseSchema), async (req, res, next) => {
+  try {
+    const record = await prisma.attendanceRecord.findUnique({
+      where: { id: req.params.recordId },
+      include: { attendanceSession: { include: { section: true } } },
+    });
+
+    if (!record) throw new AppError("Attendance record not found", 404);
+    if (record.studentId !== req.user!.id) throw new AppError("Students can only submit excuses for their own attendance", 403);
+    if (record.status === "PRESENT") throw new AppError("Excuses are only needed for absent or late records", 400);
+
+    const updated = await prisma.attendanceRecord.update({
+      where: { id: record.id },
+      data: {
+        excuseStatus: "PENDING",
+        excuseReason: req.body.reason,
+        excuseSubmittedAt: new Date(),
+      },
+    });
+
+    res.json({ success: true, data: updated });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch(
+  "/records/:recordId/excuse",
+  requirePermission("attendance:update"),
+  validate(reviewExcuseSchema),
+  requireScope(async (req) => {
+    const record = await prisma.attendanceRecord.findUnique({
+      where: { id: req.params.recordId },
+      include: { attendanceSession: { include: { section: true } } },
+    });
+
+    return {
+      ownerId: record?.studentId,
+      sectionId: record?.attendanceSession.sectionId,
+      departmentId: record?.attendanceSession.section.departmentId,
+      subjectId: record?.attendanceSession.subjectId,
+    };
+  }),
+  async (req, res, next) => {
+    try {
+      const status = req.body.status as "APPROVED" | "REJECTED";
+      const updated = await prisma.attendanceRecord.update({
+        where: { id: req.params.recordId },
+        data: {
+          excuseStatus: status,
+          excuseReviewedAt: new Date(),
+          excuseReviewedById: req.user!.id,
+          ...(status === "APPROVED" ? { status: "PRESENT" } : {}),
+        },
+      });
+
+      res.json({ success: true, data: updated });
+    } catch (error) {
+      next(error);
+    }
+  }
 );
 
 router.get(

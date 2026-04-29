@@ -23,6 +23,7 @@ interface UserRecord {
   avatar?: string | null;
   createdAt: string;
   isVerified: boolean;
+  isActive: boolean;
   githubUsername?: string | null;
   profile?: {
     handle?: string | null;
@@ -117,7 +118,7 @@ export default function AdminUsersPage() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/api/admin/users/${id}`),
     onSuccess: () => {
-      toast.success("User deleted");
+      toast.success("User deactivated");
       void queryClient.invalidateQueries({ queryKey: ["admin-users"] });
     },
     onError: () => toast.error("Failed to delete user"),
@@ -320,7 +321,10 @@ export default function AdminUsersPage() {
                       <div className="flex items-center gap-3">
                         <Avatar src={user.avatar} name={user.name} size="sm" />
                         <div>
-                          <p className="text-sm font-medium">{user.name}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium">{user.name}</p>
+                            {!user.isActive ? <Badge variant="destructive" className="text-xs">Inactive</Badge> : null}
+                          </div>
                           <p className="text-xs text-muted-foreground">{user.email}</p>
                         </div>
                       </div>
@@ -391,6 +395,7 @@ function ManageUserPanel({
     batch: user.profile?.batch ?? "",
     department: user.profile?.department ?? "",
     isPublic: user.profile?.isPublic ?? false,
+    isActive: user.isActive,
     sectionId: user.enrollments?.[0]?.sectionId ?? "",
     departmentId: user.departmentHeaded?.id ?? "",
     subjectIds: user.teachingAssignments?.map((assignment) => assignment.subject.id) ?? [],
@@ -513,6 +518,14 @@ function ManageUserPanel({
               onChange={(event) => setForm((current) => ({ ...current, isPublic: event.target.checked }))}
             />
             Public profile visible
+          </label>
+          <label className="flex items-center gap-2 text-sm sm:col-span-2">
+            <input
+              type="checkbox"
+              checked={form.isActive}
+              onChange={(event) => setForm((current) => ({ ...current, isActive: event.target.checked }))}
+            />
+            Account active
           </label>
         </div>
         <div className="flex justify-end">

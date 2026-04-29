@@ -2,13 +2,14 @@
 
 import { useEffect, useRef } from "react";
 import { api } from "@/lib/api";
-import { getSocket } from "@/lib/socket";
+import { getSocket, syncSocketAuthToken } from "@/lib/socket";
 import { useAuthStore } from "@/store/auth";
 import type { ApiResponse, SubmissionResult } from "@repo/types";
 import { useProblemStore } from "@/stores/problemStore";
 
 export function useSubmission(problemId: string, contestId?: string | null) {
   const { user } = useAuthStore();
+  const socket = typeof window === "undefined" ? null : getSocket();
   const {
     setSubmitting,
     setSubmissionResult,
@@ -19,9 +20,13 @@ export function useSubmission(problemId: string, contestId?: string | null) {
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    if (!user) return;
-    const socket = getSocket();
-    socket.emit("user:join", { userId: user.id });
+    if (!user || !socket) return;
+    void syncSocketAuthToken().then((authedSocket) => {
+      if (!authedSocket.connected) {
+        authedSocket.connect();
+      }
+      authedSocket.emit("user:join", { userId: user.id });
+    });
 
     const handleSubmission = (payload: SubmissionResult) => {
       if (!activeSubmissionId || payload.submissionId !== activeSubmissionId) return;
@@ -38,8 +43,10 @@ export function useSubmission(problemId: string, contestId?: string | null) {
     };
 
     socket.on("submission:result", handleSubmission);
+    socket.on("verdict:ready", handleSubmission);
     return () => {
       socket.off("submission:result", handleSubmission);
+      socket.off("verdict:ready", handleSubmission);
       if (pollTimeoutRef.current) {
         clearTimeout(pollTimeoutRef.current);
         pollTimeoutRef.current = null;
@@ -49,7 +56,7 @@ export function useSubmission(problemId: string, contestId?: string | null) {
         pollIntervalRef.current = null;
       }
     };
-  }, [activeSubmissionId, setSubmissionResult, setSubmitting, user]);
+  }, [activeSubmissionId, setSubmissionResult, setSubmitting, socket, user]);
 
   async function submitCode(source_code: string, language: string) {
     setSubmitting(true);
@@ -67,6 +74,9 @@ export function useSubmission(problemId: string, contestId?: string | null) {
 
     const submissionId = response.data?.submissionId ?? null;
     setActiveSubmissionId(submissionId);
+    if (submissionId) {
+      (socket ?? getSocket()).emit("submission:join", { submissionId });
+    }
 
     if (!submissionId) {
       setSubmitting(false);

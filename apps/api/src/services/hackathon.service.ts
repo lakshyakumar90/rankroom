@@ -312,7 +312,6 @@ export async function deleteHackathon(id: string) {
 }
 
 export async function registerForHackathon(hackathonId: string, userId: string, teamId?: string | null) {
-  void teamId;
   const hackathon = await prisma.hackathon.findUnique({ where: { id: hackathonId } });
   if (!hackathon) throw new AppError("Hackathon not found", 404);
   if (hackathon.registrationDeadline < new Date()) {
@@ -326,10 +325,19 @@ export async function registerForHackathon(hackathonId: string, userId: string, 
     throw new AppError(eligibility.reason, 403);
   }
 
+  if (teamId) {
+    const team = await prisma.hackathonTeam.findUnique({
+      where: { id: teamId },
+      include: { _count: { select: { members: true } } },
+    });
+    if (!team || team.hackathonId !== hackathonId) throw new AppError("Team not found", 404);
+    if (team._count.members >= hackathon.maxTeamSize) throw new AppError("Team is full", 400);
+  }
+
   const registration = await prisma.hackathonRegistration.upsert({
     where: { hackathonId_studentId: { hackathonId, studentId: userId } },
     update: {
-      teamId: null,
+      teamId: teamId ?? null,
       isEligible: eligibility.isEligible,
       eligibilityNote: eligibility.reason,
       phoneNumberSnapshot: readiness.phoneNumber,
@@ -338,13 +346,28 @@ export async function registerForHackathon(hackathonId: string, userId: string, 
     create: {
       hackathonId,
       studentId: userId,
-      teamId: null,
+      teamId: teamId ?? null,
       isEligible: eligibility.isEligible,
       eligibilityNote: eligibility.reason,
       phoneNumberSnapshot: readiness.phoneNumber,
       avatarUrlSnapshot: readiness.avatar,
     },
   });
+
+  const notification = await prisma.notification.create({
+    data: {
+      userId,
+      type: "HACKATHON_REGISTRATION_OPEN",
+      title: "Hackathon Registration Confirmed",
+      message: `You are registered for "${hackathon.title}".`,
+      link: `/hackathons/${hackathon.id}`,
+      entityId: hackathon.id,
+      entityType: "HACKATHON",
+      targetRole: Role.STUDENT,
+      targetDepartmentId: hackathon.departmentId,
+    },
+  });
+  emitNotificationToUser(userId, toNotificationDto(notification));
 
   return {
     ...registration,
@@ -413,18 +436,97 @@ export async function getHackathonRegistrations(hackathonId: string) {
   });
 }
 
-export async function createHackathonTeam(hackathonId: string, leaderId: string, payload: { name: string; memberUserIds: string[] }) {
-  void hackathonId;
-  void leaderId;
-  void payload;
-  throw new AppError("Self-managed hackathon teams are disabled for offline events", 410);
+export async function createHackathonTeam(hackathonId: string, leaderId: string, payload: { name: string; memberUserIds?: string[] }) {
+  const hackathon = await prisma.hackathon.findUnique({ where: { id: hackathonId } });
+  if (!hackathon) throw new AppError("Hackathon not found", 404);
+  if (hackathon.registrationDeadline < new Date()) throw new AppError("Hackathon registration deadline has passed", 400);
+
+  const memberUserIds = Array.from(new Set([leaderId, ...(payload.memberUserIds ?? [])]));
+  if (memberUserIds.length > hackathon.maxTeamSize) throw new AppError("Team exceeds max size", 400);
+
+  await Promise.all(
+    memberUserIds.map(async (userId) => {
+      await assertStudentParticipationReadiness(userId);
+      const eligibility = await computeHackathonEligibility(hackathonId, userId);
+      if (!eligibility.isEligible) throw new AppError(eligibility.reason, 403);
+    })
+  );
+
+  const team = await prisma.hackathonTeam.create({
+    data: {
+      hackathonId,
+      leaderId,
+      name: payload.name,
+      teamCode: `HCK-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`.toUpperCase(),
+    },
+  });
+
+  for (const userId of memberUserIds) {
+    await registerForHackathon(hackathonId, userId, team.id);
+  }
+
+  return prisma.hackathonTeam.findUnique({
+    where: { id: team.id },
+    include: { members: { include: { student: { select: { id: true, name: true, email: true } } } } },
+  });
 }
 
 export async function updateHackathonTeam(hackathonId: string, teamId: string, payload: { name?: string; submissionUrl?: string | null; memberUserIds?: string[] }) {
-  void hackathonId;
-  void teamId;
-  void payload;
-  throw new AppError("Self-managed hackathon teams are disabled for offline events", 410);
+  const team = await prisma.hackathonTeam.findUnique({ where: { id: teamId } });
+  if (!team || team.hackathonId !== hackathonId) throw new AppError("Team not found", 404);
+
+  return prisma.hackathonTeam.update({
+    where: { id: teamId },
+    data: {
+      ...(payload.name !== undefined ? { name: payload.name } : {}),
+      ...(payload.submissionUrl !== undefined ? { submissionUrl: payload.submissionUrl } : {}),
+    },
+    include: { members: { include: { student: { select: { id: true, name: true, email: true } } } } },
+  });
+}
+
+export async function inviteUserToHackathonTeam(hackathonId: string, teamId: string, leaderId: string, invitedId: string) {
+  const team = await prisma.hackathonTeam.findUnique({
+    where: { id: teamId },
+    include: { hackathon: true },
+  });
+  if (!team || team.hackathonId !== hackathonId) throw new AppError("Team not found", 404);
+  if (team.leaderId !== leaderId) throw new AppError("Only the team leader can invite members", 403);
+
+  const notification = await prisma.notification.create({
+    data: {
+      userId: invitedId,
+      type: "HACKATHON_REGISTRATION_OPEN",
+      title: "Hackathon team invite",
+      message: `You were invited to join "${team.name}" for "${team.hackathon.title}".`,
+      link: `/hackathons/${hackathonId}`,
+      entityId: team.id,
+      entityType: "HACKATHON_TEAM",
+      targetRole: Role.STUDENT,
+      targetDepartmentId: team.hackathon.departmentId,
+    },
+  });
+  emitNotificationToUser(invitedId, toNotificationDto(notification));
+
+  return { id: notification.id, teamId, invitedId, status: "PENDING" };
+}
+
+export async function acceptHackathonTeamInvite(hackathonId: string, inviteId: string, invitedId: string) {
+  const invite = await prisma.notification.findFirst({
+    where: { id: inviteId, userId: invitedId, entityType: "HACKATHON_TEAM" },
+  });
+  if (!invite?.entityId) {
+    throw new AppError("Invite not found", 404);
+  }
+
+  const team = await prisma.hackathonTeam.findUnique({ where: { id: invite.entityId }, select: { hackathonId: true } });
+  if (!team || team.hackathonId !== hackathonId) {
+    throw new AppError("Invite not found", 404);
+  }
+
+  const registration = await registerForHackathon(hackathonId, invitedId, invite.entityId);
+  await prisma.notification.update({ where: { id: invite.id }, data: { isRead: true } });
+  return registration;
 }
 
 export async function notifyEligibleStudents(actor: JWTPayload, hackathonId: string, title: string, message: string) {

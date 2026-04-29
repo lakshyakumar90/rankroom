@@ -3,7 +3,7 @@ import { prisma, Prisma } from "@repo/database";
 import { DIFFICULTY_POINTS, Difficulty, type SubmissionResult, type TestResult, type Verdict } from "@repo/types";
 import { createRedisConnection } from "../lib/redis";
 import { logger } from "../lib/logger";
-import { emitContestStandingUpdate, emitSubmissionResult } from "../lib/socket";
+import { emitContestStandingUpdate, emitNotificationToUser, emitSubmissionResult } from "../lib/socket";
 import { logActivity } from "../lib/activity";
 import { runBatch, toTestResult } from "../services/judge.service";
 import { executeSubmissionCases, normalizeExecutionSource } from "../services/execution.service";
@@ -13,6 +13,7 @@ import { recomputeStudentIntelligence } from "../services/student-intelligence.s
 import { getJudge0LanguageId } from "../lib/judge0-languages";
 import { truncateUtf8 } from "../config/execution";
 import { WORKER_CONCURRENCY } from "../config/judge0";
+import { toNotificationDto } from "../services/notification.service";
 
 export const SUBMISSION_QUEUE = "code-submissions";
 export const LEADERBOARD_QUEUE = "leaderboard-updates";
@@ -207,7 +208,7 @@ async function updateContestStanding(contestId: string, userId: string, problemI
 }
 
 export function startSubmissionWorker() {
-  return new Worker<SubmissionJobData>(
+  const worker = new Worker<SubmissionJobData>(
     SUBMISSION_QUEUE,
     async (job) => {
       const { submissionId, userId, problemId, source_code, language, contestId } = job.data;
@@ -398,7 +399,7 @@ export function startSubmissionWorker() {
           await updateContestStanding(contestId, userId, problemId);
         }
 
-        await prisma.notification.create({
+        const notification = await prisma.notification.create({
           data: {
             userId,
             type: "SUBMISSION_ACCEPTED",
@@ -409,6 +410,7 @@ export function startSubmissionWorker() {
             entityType: "SUBMISSION",
           },
         });
+        emitNotificationToUser(userId, toNotificationDto(notification));
 
         const enrollments = await prisma.enrollment.findMany({
           where: { studentId: userId },
@@ -430,6 +432,36 @@ export function startSubmissionWorker() {
     },
     { connection: createRedisConnection() as never, concurrency: WORKER_CONCURRENCY }
   );
+
+  worker.on("failed", (job, error) => {
+    const data = job?.data;
+    if (!data?.submissionId) return;
+
+    void prisma.submission
+      .update({
+        where: { id: data.submissionId },
+        data: {
+          status: "RUNTIME_ERROR",
+          stderr: truncateUtf8(error?.message ?? "Submission worker failed"),
+          verdict: [{ error: "Submission worker failed" }] as unknown as Prisma.InputJsonValue,
+        },
+      })
+      .then(() => {
+        emitSubmissionResult(data.userId, {
+          submissionId: data.submissionId,
+          verdict: "RE",
+          runtime: null,
+          memory: null,
+          testResults: [],
+          submittedAt: new Date().toISOString(),
+        });
+      })
+      .catch((updateError) => {
+        logger.error({ err: updateError, submissionId: data.submissionId }, "Failed to persist worker failure");
+      });
+  });
+
+  return worker;
 }
 
 export function startLeaderboardWorker() {

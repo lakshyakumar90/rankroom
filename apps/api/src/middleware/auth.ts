@@ -38,6 +38,8 @@ async function loadDatabaseUser(supabaseId: string) {
       role: true,
       avatar: true,
       githubUsername: true,
+      isActive: true,
+      deactivatedAt: true,
     },
   });
 
@@ -50,6 +52,21 @@ async function loadDatabaseUser(supabaseId: string) {
   return { ...user, role, scope };
 }
 
+export async function authenticateToken(token: string) {
+  const { payload } = await jwtVerify(token, jwks, {
+    issuer: jwtIssuer,
+    audience: "authenticated",
+    algorithms: ["ES256"],
+  });
+
+  const supabaseId = typeof payload.sub === "string" ? payload.sub : undefined;
+  if (!supabaseId) {
+    return { user: null, supabaseId: null };
+  }
+
+  return { user: await loadDatabaseUser(supabaseId), supabaseId };
+}
+
 export async function authenticate(req: Request, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith("Bearer ")) {
@@ -60,40 +77,42 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
   try {
     const token = authHeader.substring(7);
 
-    let supabaseId: string | undefined;
+    let authResult: Awaited<ReturnType<typeof authenticateToken>> | null = null;
     try {
-      const { payload } = await jwtVerify(token, jwks, {
-        issuer: jwtIssuer,
-        audience: "authenticated",
-        algorithms: ["ES256"],
-      });
-      supabaseId = typeof payload.sub === "string" ? payload.sub : undefined;
+      authResult = await authenticateToken(token);
     } catch (jwtError) {
       console.error("JWT verification failed:", jwtError);
       res.status(401).json({ success: false, error: "Invalid or expired token" });
       return;
     }
 
-    if (!supabaseId) {
+    if (!authResult?.supabaseId) {
       console.error("No sub (user ID) in JWT");
       res.status(401).json({ success: false, error: "Invalid token" });
       return;
     }
 
-    // Load user from database
-    const dbUser = await loadDatabaseUser(supabaseId);
-    if (!dbUser) {
-      console.error("User not found in database. Supabase ID:", supabaseId);
+    if (!authResult.user) {
+      console.error("User not found in database. Supabase ID:", authResult.supabaseId);
       // Return 404 so frontend knows to call /auth/sync
-      res.status(404).json({ 
-        success: false, 
+      res.status(404).json({
+        success: false,
         error: "User not found in database",
-        supabaseId 
+        supabaseId: authResult.supabaseId,
       });
       return;
     }
 
-    req.user = dbUser;
+    if (!authResult.user.isActive) {
+      res.status(401).json({
+        success: false,
+        error: "Account is deactivated",
+        deactivatedAt: authResult.user.deactivatedAt?.toISOString() ?? null,
+      });
+      return;
+    }
+
+    req.user = authResult.user;
     next();
   } catch (err) {
     console.error("Authentication error:", err);
@@ -169,21 +188,9 @@ export function optionalAuth(req: Request, _res: Response, next: NextFunction): 
   const token = authHeader.substring(7);
   void (async () => {
     try {
-      const { payload } = await jwtVerify(token, jwks, {
-        issuer: jwtIssuer,
-        audience: "authenticated",
-        algorithms: ["ES256"],
-      });
-      const supabaseId = typeof payload.sub === "string" ? payload.sub : undefined;
-
-      if (!supabaseId) {
-        next();
-        return;
-      }
-
-      const dbUser = await loadDatabaseUser(supabaseId);
-      if (dbUser) {
-        req.user = dbUser;
+      const authResult = await authenticateToken(token);
+      if (authResult.user?.isActive) {
+        req.user = authResult.user;
       }
 
       next();

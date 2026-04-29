@@ -4,7 +4,7 @@ import { useEffect, useEffectEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Notification, SubmissionResult } from "@repo/types";
-import { getSocket } from "@/lib/socket";
+import { getSocket, syncSocketAuthToken } from "@/lib/socket";
 import { useAuthStore } from "@/store/auth";
 import { useNotificationStore } from "@/store/notifications";
 
@@ -17,6 +17,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   const user = useAuthStore((state) => state.user);
   const prependNotification = useNotificationStore((state) => state.prependNotification);
   const clearNotifications = useNotificationStore((state) => state.clear);
+  const socket = typeof window === "undefined" ? null : getSocket();
 
   const handleNotification = useEffectEvent((notification: Notification) => {
     prependNotification(notification);
@@ -62,7 +63,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   });
 
   useEffect(() => {
-    const socket = getSocket();
+    if (!socket) return;
 
     const joinUserRooms = () => {
       if (!user) return;
@@ -101,12 +102,15 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    socket.connect();
-    joinUserRooms();
+    void syncSocketAuthToken().then((authedSocket) => {
+      authedSocket.connect();
+      joinUserRooms();
+    });
 
     socket.on("notification:new", handleNotification);
     socket.on("leaderboard:updated", handleLeaderboardUpdated);
     socket.on("submission:result", handleSubmissionResult);
+    socket.on("verdict:ready", handleSubmissionResult);
     socket.on("connect", handleConnected);
     socket.io.on("reconnect", handleReconnected);
     socket.on("connect_error", handleConnectError);
@@ -115,6 +119,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       socket.off("notification:new", handleNotification);
       socket.off("leaderboard:updated", handleLeaderboardUpdated);
       socket.off("submission:result", handleSubmissionResult);
+      socket.off("verdict:ready", handleSubmissionResult);
       socket.off("connect", handleConnected);
       socket.io.off("reconnect", handleReconnected);
       socket.off("connect_error", handleConnectError);
@@ -124,6 +129,8 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     handleLeaderboardUpdated,
     handleNotification,
     handleSubmissionResult,
+    queryClient,
+    socket,
     user,
   ]);
 

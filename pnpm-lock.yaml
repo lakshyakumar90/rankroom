@@ -418,6 +418,34 @@ importers:
         specifier: 5.9.2
         version: 5.9.2
 
+  qa:
+    dependencies:
+      '@repo/database':
+        specifier: workspace:*
+        version: link:../packages/database
+      '@supabase/supabase-js':
+        specifier: ^2.49.4
+        version: 2.99.0
+      dotenv:
+        specifier: ^16.4.7
+        version: 16.6.1
+      socket.io-client:
+        specifier: ^4.8.1
+        version: 4.8.3
+    devDependencies:
+      '@repo/typescript-config':
+        specifier: workspace:*
+        version: link:../packages/typescript-config
+      '@types/node':
+        specifier: ^22.15.3
+        version: 22.15.3
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: 5.9.2
+        version: 5.9.2
+
 packages:
 
   '@alloc/quick-lru@5.2.0':

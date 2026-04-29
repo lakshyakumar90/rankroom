@@ -15,6 +15,7 @@ import { supabase } from "../lib/supabase";
 import { ensureUniqueHandle } from "../lib/handles";
 import { z } from "zod";
 import { recomputeStudentIntelligence } from "../services/student-intelligence.service";
+import { logActivity } from "../lib/activity";
 
 const router: ExpressRouter = Router();
 router.use(authenticate, requireRole(Role.SUPER_ADMIN, Role.ADMIN));
@@ -235,6 +236,8 @@ router.patch("/users/:id", async (req, res, next) => {
       sectionId,
       departmentId,
       subjectIds,
+      isActive,
+      deactivationReason,
     } = req.body as {
       name?: string;
       githubUsername?: string | null;
@@ -247,10 +250,16 @@ router.patch("/users/:id", async (req, res, next) => {
       sectionId?: string | null;
       departmentId?: string | null;
       subjectIds?: string[];
+      isActive?: boolean;
+      deactivationReason?: string | null;
     };
 
     const section = await getSectionDepartmentLabel(sectionId ?? undefined);
     const derivedDepartment = section?.department.name ?? undefined;
+
+    if (isActive === false && target.id === req.user!.id) {
+      throw new AppError("You cannot deactivate your own account", 400);
+    }
 
     const nextHandle =
       typeof handle === "string" && handle.trim().length > 0
@@ -263,6 +272,14 @@ router.patch("/users/:id", async (req, res, next) => {
         data: {
           ...(name !== undefined ? { name } : {}),
           ...(githubUsername !== undefined ? { githubUsername } : {}),
+          ...(isActive !== undefined
+            ? {
+                isActive,
+                deactivatedAt: isActive ? null : new Date(),
+                deactivatedById: isActive ? null : req.user!.id,
+                deactivationReason: isActive ? null : deactivationReason?.trim() || null,
+              }
+            : {}),
         },
       }),
       prisma.profile.upsert({
@@ -340,6 +357,20 @@ router.patch("/users/:id", async (req, res, next) => {
       }
     }
 
+    await logActivity(req.user!.id, "admin.user.updated", {
+      targetUserId: target.id,
+      changedFields: {
+        name: name !== undefined,
+        githubUsername: githubUsername !== undefined,
+        profile: nextHandle !== undefined || bio !== undefined || college !== undefined || batch !== undefined || department !== undefined || isPublic !== undefined,
+        section: sectionId !== undefined,
+        department: departmentId !== undefined,
+        subjects: subjectIds !== undefined,
+        isActive: isActive !== undefined,
+      },
+      isActive,
+    });
+
     const data = await prisma.user.findUnique({
       where: { id: target.id },
       include: {
@@ -362,10 +393,21 @@ router.delete("/users/:id", async (req, res, next) => {
   try {
     const user = await prisma.user.findUnique({ where: { id: req.params.id } });
     if (!user) throw new AppError("User not found", 404);
+    if (user.id === req.user!.id) throw new AppError("You cannot deactivate your own account", 400);
 
-    await supabase.auth.admin.deleteUser(user.supabaseId);
-    await prisma.user.delete({ where: { id: req.params.id } });
-    res.json({ success: true, message: "User deleted" });
+    await prisma.user.update({
+      where: { id: req.params.id },
+      data: {
+        isActive: false,
+        deactivatedAt: new Date(),
+        deactivatedById: req.user!.id,
+        deactivationReason: "Deactivated by administrator",
+      },
+    });
+
+    await logActivity(req.user!.id, "admin.user.deactivated", { targetUserId: user.id });
+
+    res.json({ success: true, message: "User deactivated" });
   } catch (error) {
     next(error);
   }

@@ -15,6 +15,10 @@ model User {
   role                          Role                            @default(STUDENT)
   avatar                        String?
   isVerified                    Boolean                         @default(false)
+  isActive                      Boolean                         @default(true)
+  deactivatedAt                 DateTime?
+  deactivatedById               String?
+  deactivationReason            String?
   githubUsername                String?
   createdAt                     DateTime                        @default(now())
   updatedAt                     DateTime                        @updatedAt
@@ -255,6 +259,8 @@ model Subject {
   sectionId          String
   departmentId       String
   teacherId          String?
+  minimumAttendancePct Float                    @default(75)
+  lateAttendanceWeight Float                    @default(0.5)
   isArchived         Boolean                    @default(false)
   archivedAt         DateTime?
   createdAt          DateTime                   @default(now())
@@ -310,6 +316,11 @@ model AttendanceRecord {
   attendanceSessionId String
   studentId           String
   status              AttendanceStatus  @default(PRESENT)
+  excuseStatus        AttendanceExcuseStatus?
+  excuseReason        String?
+  excuseSubmittedAt   DateTime?
+  excuseReviewedAt    DateTime?
+  excuseReviewedById  String?
   attendanceSession   AttendanceSession @relation(fields: [attendanceSessionId], references: [id], onDelete: Cascade)
   student             User              @relation(fields: [studentId], references: [id])
 
@@ -327,6 +338,9 @@ model Grade {
   maxMarks  Float
   semester  Int
   remarks   String?
+  isPublished Boolean @default(false)
+  publishedAt DateTime?
+  publishedById String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   student   User     @relation("StudentGrades", fields: [studentId], references: [id])
@@ -345,6 +359,7 @@ model Assignment {
   dueDate       DateTime
   maxScore      Float
   attachmentUrl String?
+  rubric        Json                   @default("[]")
   type          AssignmentType         @default(FILE_UPLOAD)
   status        AssignmentStatus       @default(CREATED)
   allowLate     Boolean                @default(false)
@@ -356,6 +371,7 @@ model Assignment {
   problems      AssignmentProblem[]
   questions     AssignmentQuestion[]
   submissions   AssignmentSubmission[]
+  extensions    AssignmentExtension[]
   subject       Subject                @relation(fields: [subjectId], references: [id])
   teacher       User                   @relation("AssignmentCreator", fields: [teacherId], references: [id])
 
@@ -405,13 +421,16 @@ model AssignmentSubmission {
   studentId       String
   submittedAt     DateTime?
   fileUrl         String?
+  content         String?
   score           Float?
   feedback        String?
   isLate          Boolean                    @default(false)
   codeSubmissions Json?
   mcqAnswers      Json?
+  rubricEvaluation Json?
   gradedById      String?
   gradedAt        DateTime?
+  publishedAt     DateTime?
   status          AssignmentSubmissionStatus @default(PENDING)
   createdAt       DateTime                   @default(now())
   updatedAt       DateTime                   @updatedAt
@@ -420,6 +439,21 @@ model AssignmentSubmission {
 
   @@unique([assignmentId, studentId])
   @@map("assignment_submissions")
+}
+
+model AssignmentExtension {
+  id             String     @id @default(cuid())
+  assignmentId   String
+  studentId      String
+  extendedDueDate DateTime
+  reason         String?
+  grantedById    String
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  assignment     Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@unique([assignmentId, studentId])
+  @@map("assignment_extensions")
 }
 
 model Problem {
@@ -1169,6 +1203,12 @@ enum AttendanceStatus {
   PRESENT
   ABSENT
   LATE
+}
+
+enum AttendanceExcuseStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum ExamType {

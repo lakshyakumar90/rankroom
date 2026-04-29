@@ -1,4 +1,5 @@
-import { Router, type Request, type Router as ExpressRouter } from "express";
+import { Router, type NextFunction, type Request, type Response, type Router as ExpressRouter } from "express";
+import rateLimit from "express-rate-limit";
 import { prisma } from "@repo/database";
 import { authenticate, canAccessSection, optionalAuth } from "../middleware/auth";
 import { requirePermission, requireScope } from "../middleware/permissions";
@@ -16,6 +17,8 @@ import {
 } from "../services/contest.service";
 import { recomputeStudentIntelligence } from "../services/student-intelligence.service";
 import { detectContestPlagiarism } from "../services/plagiarism.service";
+import { emitNotificationToUser } from "../lib/socket";
+import { toNotificationDto } from "../services/notification.service";
 import {
   buildContestViewerPayload,
   getContestRegistrationState,
@@ -24,6 +27,21 @@ import {
 import { assertStudentParticipationReadiness } from "../services/student-profile.service";
 
 const router: ExpressRouter = Router();
+
+const contestSubmissionLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.id ?? req.socket.remoteAddress ?? "unknown",
+  message: { success: false, error: "Too many contest submissions, please wait before trying again" },
+});
+
+const contestSubmitSchema = z.object({
+  problemId: z.string().min(1),
+  code: z.string().min(1),
+  language: z.string().min(1),
+});
 
 const contestFiltersSchema = paginationSchema.extend({
   status: z.enum(["DRAFT", "UPCOMING", "SCHEDULED", "REGISTRATION_OPEN", "LIVE", "FROZEN", "ENDED", "RESULTS_PUBLISHED"]).optional(),
@@ -238,6 +256,47 @@ router.post("/", authenticate, requirePermission("contests:create"), validate(cr
       include: { problems: { include: { problem: { select: { title: true, difficulty: true } } } } },
     });
 
+    const announcementRecipients = participantIds.length
+      ? participantIds
+      : (
+          await prisma.user.findMany({
+            where: {
+              role: "STUDENT",
+              ...(sectionId
+                ? { enrollments: { some: { sectionId } } }
+                : departmentId
+                ? { enrollments: { some: { section: { departmentId } } } }
+                : {}),
+            },
+            select: { id: true },
+          })
+        ).map((user) => user.id);
+
+    if (announcementRecipients.length > 0) {
+      const notifications = await prisma.$transaction(
+        [...new Set(announcementRecipients)].map((userId) =>
+          prisma.notification.create({
+            data: {
+              userId,
+              type: "CONTEST_CREATED",
+              title: "Contest Announced",
+              message: `Contest "${contest.title}" is scheduled to start on ${contest.startTime.toLocaleString()}.`,
+              link: `/contests/${contest.id}`,
+              entityId: contest.id,
+              entityType: "CONTEST",
+              targetRole: "STUDENT",
+              targetSectionId: sectionId,
+              targetDepartmentId: departmentId,
+            },
+          })
+        )
+      );
+
+      notifications.forEach((notification) => {
+        emitNotificationToUser(notification.userId, toNotificationDto(notification));
+      });
+    }
+
     res.status(201).json({ success: true, data: contest });
   } catch (err) {
     next(err);
@@ -315,13 +374,7 @@ router.get(
   }
 );
 
-// POST /api/contests/:id/publish-results - publish results and generate certificates
-router.post(
-  "/:id/publish-results",
-  authenticate,
-  requirePermission("contests:create"),
-  requireScope(getContestScopeResource),
-  async (req, res, next) => {
+async function publishContestResultsHandler(req: Request, res: Response, next: NextFunction) {
   try {
     const contest = await prisma.contest.findUnique({ where: { id: req.params.id } });
     if (!contest) throw new AppError("Contest not found", 404);
@@ -346,7 +399,15 @@ router.post(
   } catch (err) {
     next(err);
   }
-  }
+}
+
+// POST /api/contests/:id/publish-results - publish results and generate certificates
+router.post(
+  ["/:id/publish-results", "/:id/publish"],
+  authenticate,
+  requirePermission("contests:create"),
+  requireScope(getContestScopeResource),
+  publishContestResultsHandler
 );
 
 // GET /api/contests/:id/problems
@@ -389,7 +450,7 @@ router.get("/:id/problems", optionalAuth, async (req, res, next) => {
 });
 
 // POST /api/contests/:id/submit - submit during contest
-router.post("/:id/submit", authenticate, async (req, res, next) => {
+router.post("/:id/submit", authenticate, contestSubmissionLimiter, validate(contestSubmitSchema), async (req, res, next) => {
   try {
     const { problemId, code, language } = req.body as { problemId: string; code: string; language: string };
     const contestId = req.params.id;

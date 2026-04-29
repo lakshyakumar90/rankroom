@@ -5,6 +5,12 @@ import { NotificationType } from "@repo/types";
 
 const ATTENDANCE_WARNING_THRESHOLD = 75;
 
+function attendanceCredit(status: "PRESENT" | "ABSENT" | "LATE", lateWeight: number) {
+  if (status === "PRESENT") return 1;
+  if (status === "LATE") return lateWeight;
+  return 0;
+}
+
 /**
  * After saving attendance, check each student's percentage for the subject.
  * If it drops below 75%, create an ATTENDANCE_LOW notification.
@@ -16,31 +22,34 @@ async function checkAndNotifyLowAttendance(
 ): Promise<void> {
   await Promise.all(
     studentIds.map(async (studentId) => {
-      const records = await prisma.attendanceRecord.findMany({
-        where: {
-          studentId,
-          attendanceSession: { sectionId, subjectId },
-        },
-        select: { status: true },
-      });
+      const [subject, records] = await Promise.all([
+        prisma.subject.findUnique({
+          where: { id: subjectId },
+          select: { name: true, minimumAttendancePct: true, lateAttendanceWeight: true },
+        }),
+        prisma.attendanceRecord.findMany({
+          where: {
+            studentId,
+            attendanceSession: { sectionId, subjectId },
+          },
+          select: { status: true },
+        }),
+      ]);
 
       if (records.length === 0) return;
 
-      const attended = records.filter((r) => r.status !== "ABSENT").length;
+      const lateWeight = subject?.lateAttendanceWeight ?? 0.5;
+      const attended = records.reduce((sum, record) => sum + attendanceCredit(record.status, lateWeight), 0);
       const percentage = Math.round((attended / records.length) * 100);
+      const threshold = subject?.minimumAttendancePct ?? ATTENDANCE_WARNING_THRESHOLD;
 
-      if (percentage < ATTENDANCE_WARNING_THRESHOLD) {
-        const subject = await prisma.subject.findUnique({
-          where: { id: subjectId },
-          select: { name: true },
-        });
-
+      if (percentage < threshold) {
         const notification = await prisma.notification.create({
           data: {
             userId: studentId,
             type: "ATTENDANCE_LOW",
             title: "Low Attendance Warning",
-            message: `Your attendance in ${subject?.name ?? "a subject"} has dropped to ${percentage}%. Minimum required is ${ATTENDANCE_WARNING_THRESHOLD}%.`,
+            message: `Your attendance in ${subject?.name ?? "a subject"} has dropped to ${percentage}%. Minimum required is ${threshold}%.`,
             link: "/attendance",
             entityId: subjectId,
             entityType: "SUBJECT",
@@ -170,9 +179,14 @@ export async function getStudentSubjectAttendance(
     where: { studentId, attendanceSession: { subjectId } },
     select: { status: true },
   });
+  const subject = await prisma.subject.findUnique({
+    where: { id: subjectId },
+    select: { lateAttendanceWeight: true },
+  });
 
   const total = records.length;
-  const present = records.filter((r) => r.status !== "ABSENT").length;
+  const lateWeight = subject?.lateAttendanceWeight ?? 0.5;
+  const present = records.reduce((sum, record) => sum + attendanceCredit(record.status, lateWeight), 0);
   const percentage = total === 0 ? 0 : Math.round((present / total) * 100);
 
   return { percentage, present, total };
@@ -186,11 +200,17 @@ export async function getStudentOverallAttendance(
 ): Promise<{ percentage: number; present: number; total: number }> {
   const records = await prisma.attendanceRecord.findMany({
     where: { studentId },
-    select: { status: true },
+    select: {
+      status: true,
+      attendanceSession: { select: { subject: { select: { lateAttendanceWeight: true } } } },
+    },
   });
 
   const total = records.length;
-  const present = records.filter((r) => r.status !== "ABSENT").length;
+  const present = records.reduce(
+    (sum, record) => sum + attendanceCredit(record.status, record.attendanceSession.subject.lateAttendanceWeight ?? 0.5),
+    0
+  );
   const percentage = total === 0 ? 0 : Math.round((present / total) * 100);
 
   return { percentage, present, total };
@@ -226,7 +246,7 @@ export async function getStudentAttendance(studentId: string) {
     include: {
       attendanceSession: {
         include: {
-          subject: { select: { id: true, name: true, code: true } },
+          subject: { select: { id: true, name: true, code: true, lateAttendanceWeight: true } },
           section: { select: { id: true, name: true, code: true } },
         },
       },
@@ -234,7 +254,7 @@ export async function getStudentAttendance(studentId: string) {
     orderBy: { attendanceSession: { date: "desc" } },
   });
 
-  const summary = new Map<string, { subjectId: string; subjectName: string; present: number; absent: number; late: number; total: number }>();
+  const summary = new Map<string, { subjectId: string; subjectName: string; present: number; absent: number; late: number; total: number; weightedPresent: number }>();
 
   for (const record of records) {
     const key = record.attendanceSession.subjectId;
@@ -246,11 +266,13 @@ export async function getStudentAttendance(studentId: string) {
         absent: 0,
         late: 0,
         total: 0,
+        weightedPresent: 0,
       });
     }
 
     const bucket = summary.get(key)!;
     bucket.total += 1;
+    bucket.weightedPresent += attendanceCredit(record.status, record.attendanceSession.subject.lateAttendanceWeight ?? 0.5);
     if (record.status === "PRESENT") bucket.present += 1;
     else if (record.status === "ABSENT") bucket.absent += 1;
     else bucket.late += 1;
@@ -260,7 +282,7 @@ export async function getStudentAttendance(studentId: string) {
     records,
     summary: Array.from(summary.values()).map((row) => ({
       ...row,
-      percentage: row.total === 0 ? 0 : Math.round(((row.present + row.late) / row.total) * 100),
+      percentage: row.total === 0 ? 0 : Math.round((row.weightedPresent / row.total) * 100),
     })),
   };
 }
@@ -275,11 +297,11 @@ export async function getSectionSubjectSummary(sectionId: string, subjectId: str
     },
     include: {
       student: { select: { id: true, name: true, email: true, avatar: true } },
-      attendanceSession: { select: { date: true } },
+      attendanceSession: { select: { date: true, subject: { select: { lateAttendanceWeight: true } } } },
     },
   });
 
-  const studentSummary = new Map<string, { studentId: string; studentName: string; present: number; absent: number; late: number; total: number }>();
+  const studentSummary = new Map<string, { studentId: string; studentName: string; present: number; absent: number; late: number; total: number; weightedPresent: number }>();
   for (const record of records) {
     if (!studentSummary.has(record.studentId)) {
       studentSummary.set(record.studentId, {
@@ -289,11 +311,13 @@ export async function getSectionSubjectSummary(sectionId: string, subjectId: str
         absent: 0,
         late: 0,
         total: 0,
+        weightedPresent: 0,
       });
     }
 
     const row = studentSummary.get(record.studentId)!;
     row.total += 1;
+    row.weightedPresent += attendanceCredit(record.status, record.attendanceSession.subject.lateAttendanceWeight ?? 0.5);
     if (record.status === "PRESENT") row.present += 1;
     else if (record.status === "ABSENT") row.absent += 1;
     else row.late += 1;
@@ -301,21 +325,21 @@ export async function getSectionSubjectSummary(sectionId: string, subjectId: str
 
   return Array.from(studentSummary.values()).map((row) => ({
     ...row,
-    percentage: row.total === 0 ? 0 : Math.round(((row.present + row.late) / row.total) * 100),
+    percentage: row.total === 0 ? 0 : Math.round((row.weightedPresent / row.total) * 100),
   }));
 }
 
 export async function getLowAttendance(sectionId: string) {
   const subjects = await prisma.subject.findMany({
     where: { sectionId },
-    select: { id: true, name: true, code: true },
+    select: { id: true, name: true, code: true, minimumAttendancePct: true },
   });
 
   const results = await Promise.all(
     subjects.map(async (subject) => {
       const summary = await getSectionSubjectSummary(sectionId, subject.id);
       return summary
-        .filter((row) => row.percentage < 75)
+        .filter((row) => row.percentage < subject.minimumAttendancePct)
         .map((row) => ({
           ...row,
           subject,

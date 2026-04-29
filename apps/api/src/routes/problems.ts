@@ -1,4 +1,5 @@
 import { Router, type Router as ExpressRouter } from "express";
+import rateLimit from "express-rate-limit";
 import { prisma, Prisma } from "@repo/database";
 import { authenticate, requireRole, optionalAuth } from "../middleware/auth";
 import { requirePermission } from "../middleware/permissions";
@@ -27,6 +28,15 @@ import {
 } from "../config/execution";
 
 const router: ExpressRouter = Router();
+
+const submissionLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.id ?? req.socket.remoteAddress ?? "unknown",
+  message: { success: false, error: "Too many submissions, please wait before trying again" },
+});
 
 const problemFiltersSchema = paginationSchema.extend({
   difficulty: z.enum(["EASY", "MEDIUM", "HARD"]).optional(),
@@ -210,7 +220,7 @@ router.get("/", optionalAuth, validate(problemFiltersSchema, "query"), async (re
   }
 });
 
-router.post("/:id/run", authenticate, validate(runSchema), async (req, res, next) => {
+router.post("/:id/run", authenticate, submissionLimiter, validate(runSchema), async (req, res, next) => {
   try {
     const { source_code, language, stdin } = req.body as { source_code: string; language: string; stdin?: string };
     if (!isAllowedProblemLanguage(language)) {
@@ -395,7 +405,7 @@ router.post("/:id/run", authenticate, validate(runSchema), async (req, res, next
   }
 });
 
-router.post("/:id/submit", authenticate, validate(submitSchema), async (req, res, next) => {
+router.post("/:id/submit", authenticate, submissionLimiter, validate(submitSchema), async (req, res, next) => {
   try {
     const { source_code, language } = req.body as { source_code: string; language: string };
     if (!isAllowedProblemLanguage(language)) {

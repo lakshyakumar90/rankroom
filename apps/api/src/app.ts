@@ -60,6 +60,16 @@ export function createApp(): Express {
     message: { success: false, error: "Too many code submissions, please wait" },
   });
 
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    keyGenerator: (req) => req.socket.remoteAddress ?? "unknown",
+    message: { success: false, error: "Too many auth attempts, please wait" },
+  });
+
   // Logging
   app.use(
     pinoHttp({
@@ -99,7 +109,7 @@ export function createApp(): Express {
   });
 
   // API Routes
-  app.use("/api/auth", authRoutes);
+  app.use("/api/auth", authLimiter, authRoutes);
   app.use("/api/users", userRoutes);
   app.use("/api/admin", adminRoutes);
   app.use("/api/departments", departmentRoutes);

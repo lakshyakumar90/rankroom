@@ -191,11 +191,13 @@ async function createUser(
       email: input.email,
       name: input.name,
       role: input.role,
+      avatar: input.role === Role.STUDENT ? `https://api.dicebear.com/8.x/initials/svg?seed=${encodeURIComponent(input.name)}` : undefined,
       isVerified: true,
       githubUsername: input.githubUsername,
       profile: {
         create: {
           handle: input.handle,
+          phoneNumber: input.role === Role.STUDENT ? "+15550001000" : null,
           skills: [],
           isPublic: input.role === Role.STUDENT,
         },
